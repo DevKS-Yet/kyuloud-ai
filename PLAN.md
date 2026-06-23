@@ -267,17 +267,23 @@ spring:
 1. 시스템 프롬프트를 `resources/prompts/system-chat.st`로 분리, `ChatClientConfig`에서 `@Value` Resource로 주입(`defaultSystem(Resource)`).
 - **완료 기준**: 프롬프트 외부화, 코드 변경 없이 프롬프트 수정 가능. ✅ 정체성 + "모르면 모른다" 규칙 반영 검증 완료.
 
-### Phase 2 — RAG (3~4일)
-1. **인프라**: PostgreSQL + pgvector 기동(Docker), `VectorStoreConfig` 빈 구성, 임베딩 모델 설정.
-2. **Ingest(ETL) 파이프라인**:
-   - `DocumentController`로 파일 업로드(`POST /api/documents`).
-   - `DocumentReader`(Tika/PDF) → `TokenTextSplitter`로 청킹 → `VectorStore.add()`로 임베딩 적재.
-   - 문서 메타데이터(원본명, chunk 수 등)는 RDB에 저장.
-3. **Retrieval**:
-   - `QuestionAnswerAdvisor`(기본) 또는 `RetrievalAugmentationAdvisor`(고급: query 변환·재정렬)로 RAG 구성.
-   - `POST /api/rag/chat` : 검색 context 주입 후 응답 + 출처(citation) 반환.
+### Phase 2 — RAG
+> **전략**: 먼저 **인메모리 `SimpleVectorStore`로 PoC(2a)** 를 끝내 RAG 동작을 검증하고,
+> 이후 pgvector + RDB 영속화(2b)로 확장한다. (PoC 단계는 외부 인프라 없이 Ollama 임베딩 모델만 필요)
+
+#### Phase 2a — 인메모리 RAG PoC ✅ 완료
+1. **임베딩/벡터스토어**: `VectorStoreConfig`에서 `SimpleVectorStore`(Ollama `nomic-embed-text` 임베딩) 빈 구성.
+2. **Ingest**: `POST /api/documents` (텍스트 본문 적재) → `TokenTextSplitter` 청킹 → `VectorStore.add()`.
+3. **Retrieval**: `POST /api/rag/chat` — `QuestionAnswerAdvisor`로 검색 context 주입 후 응답.
+4. **의존성 추가**: `spring-ai-vector-store`, `spring-ai-vector-store-advisor`.
+- **완료 기준**: 적재한 문서 내용에 근거해 답변하고, 근거 없으면 "모른다"고 응답(환각 억제). ✅ 적재 사실 정답 + 없는 사실 "모른다" 검증 완료.
+- **사전 준비**: `ollama pull nomic-embed-text` (완료).
+
+#### Phase 2b — 영속화/확장 (이후)
+1. **인프라**: PostgreSQL + pgvector 기동(Docker), `VectorStore`를 pgvector로 교체.
+2. **Ingest 확장**: 파일 업로드(`DocumentReader` Tika/PDF), 문서 메타데이터 RDB 저장.
+3. **Retrieval 고도화**: `RetrievalAugmentationAdvisor`(query 변환·재정렬), 출처(citation) 반환.
 4. 검색 파라미터(topK, similarityThreshold) 튜닝 및 프롬프트 템플릿(`system-rag.st`) 정비.
-- **완료 기준**: 업로드한 문서 내용에 근거해 답변하고, 모르면 "모른다"고 응답(환각 억제).
 
 ### Phase 3 — Agent Chat (4~6일)
 1. **Tool 기본**: `@Tool` 어노테이션으로 단순 도구(DateTimeTool 등) 등록 → tool-calling 동작 검증.
