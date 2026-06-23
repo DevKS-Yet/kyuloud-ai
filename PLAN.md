@@ -258,10 +258,10 @@ spring:
 3. (개선) `GlobalExceptionHandler`에 `HttpMessageNotReadableException` → `400 MALFORMED_REQUEST` 추가.
 - **완료 기준**: 토큰 단위 스트리밍 응답 수신. ✅ SSE 스트리밍 + 400 응답 검증 완료.
 
-#### Phase 1c — 멀티턴 메모리
-1. `ChatMemory`(InMemory) 빈 + `MessageChatMemoryAdvisor`를 `ChatClient`에 적용.
-2. 요청에 `conversationId`(세션 ID)를 받아 대화 구분.
-- **완료 기준**: 세션 ID 기준으로 이전 대화를 기억하며 응답.
+#### Phase 1c — 멀티턴 메모리 ✅ 완료
+1. `ChatMemory`(InMemory, `MessageWindowChatMemory`, max 20) 빈 + `MessageChatMemoryAdvisor`를 `ChatClient` 기본 advisor로 적용.
+2. `ChatRequest`에 `conversationId`(선택) 추가, 서비스에서 메모리 파라미터로 전달(없으면 `default`).
+- **완료 기준**: 세션 ID 기준으로 이전 대화를 기억하며 응답. ✅ 동일 세션 기억 + 세션 간 격리 검증 완료.
 
 #### Phase 1d — 프롬프트 템플릿 분리
 1. 시스템 프롬프트를 `prompts/system-chat.st`로 분리하고 설정에서 주입.
