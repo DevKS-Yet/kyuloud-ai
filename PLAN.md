@@ -246,16 +246,17 @@ spring:
 ### Phase 1 — Simple Chat
 소스 수정 범위가 넓어 하위 단계로 나누어 각 단계마다 컴파일/동작을 검증한다.
 
-#### Phase 1a — 기본 단발 채팅
+#### Phase 1a — 기본 단발 채팅 ✅ 완료
 1. `ChatClientConfig`에서 `ChatClient.Builder`로 기본 `ChatClient` 빈 생성 + 시스템 프롬프트 지정.
 2. `chat` 패키지: `ChatController` + `ChatService` + `ChatRequest`/`ChatResponse` DTO.
    - `POST /api/chat` : 단발 질의/응답.
-- **완료 기준**: 단발 질의에 LLM 응답 반환(`gemma4:e4b` pull 필요).
+- **완료 기준**: 단발 질의에 LLM 응답 반환(`gemma4:e4b`). ✅ 실호출 검증 완료.
 
-#### Phase 1b — 스트리밍 응답
+#### Phase 1b — 스트리밍 응답 ✅ 완료
 1. `ChatService`에 스트리밍 메서드 추가(`Flux<String>` / `ChatClient.stream()`).
 2. `POST /api/chat/stream` : SSE(`text/event-stream`) 응답.
-- **완료 기준**: 토큰 단위 스트리밍 응답 수신.
+3. (개선) `GlobalExceptionHandler`에 `HttpMessageNotReadableException` → `400 MALFORMED_REQUEST` 추가.
+- **완료 기준**: 토큰 단위 스트리밍 응답 수신. ✅ SSE 스트리밍 + 400 응답 검증 완료.
 
 #### Phase 1c — 멀티턴 메모리
 1. `ChatMemory`(InMemory) 빈 + `MessageChatMemoryAdvisor`를 `ChatClient`에 적용.
