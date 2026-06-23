@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 /**
  * Phase 1a — 단발 채팅 서비스.
@@ -21,6 +22,17 @@ public class ChatService {
         return chatClient.prompt()
                 .user(message)
                 .call()
+                .content();
+    }
+
+    /**
+     * Phase 1b — 토큰 단위 스트리밍 응답.
+     */
+    public Flux<String> stream(String message) {
+        log.debug("stream request: {}", message);
+        return chatClient.prompt()
+                .user(message)
+                .stream()
                 .content();
     }
 }
