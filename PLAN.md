@@ -263,9 +263,9 @@ spring:
 2. `ChatRequest`에 `conversationId`(선택) 추가, 서비스에서 메모리 파라미터로 전달(없으면 `default`).
 - **완료 기준**: 세션 ID 기준으로 이전 대화를 기억하며 응답. ✅ 동일 세션 기억 + 세션 간 격리 검증 완료.
 
-#### Phase 1d — 프롬프트 템플릿 분리
-1. 시스템 프롬프트를 `prompts/system-chat.st`로 분리하고 설정에서 주입.
-- **완료 기준**: 프롬프트 외부화, 코드 변경 없이 프롬프트 수정 가능.
+#### Phase 1d — 프롬프트 템플릿 분리 ✅ 완료
+1. 시스템 프롬프트를 `resources/prompts/system-chat.st`로 분리, `ChatClientConfig`에서 `@Value` Resource로 주입(`defaultSystem(Resource)`).
+- **완료 기준**: 프롬프트 외부화, 코드 변경 없이 프롬프트 수정 가능. ✅ 정체성 + "모르면 모른다" 규칙 반영 검증 완료.
 
 ### Phase 2 — RAG (3~4일)
 1. **인프라**: PostgreSQL + pgvector 기동(Docker), `VectorStoreConfig` 빈 구성, 임베딩 모델 설정.
@@ -314,7 +314,7 @@ spring:
 ## 7. 마일스톤 체크리스트
 
 - [x] **M0** web/validation 의존성 추가, 프로파일·예외 처리, ping 엔드포인트 (✅ Phase 0)
-- [ ] **M1** Simple Chat (스트리밍 + 멀티턴 메모리)
+- [x] **M1** Simple Chat (스트리밍 + 멀티턴 메모리 + 프롬프트 외부화) (✅ Phase 1)
 - [ ] **M2** RAG (문서 적재 + 검색 + 출처 응답)
 - [ ] **M3** Agent (tool-calling + RAG tool + ReAct 루프)
 - [ ] **M4** 운영 강화 (가드레일/관측/영속화/테스트)
