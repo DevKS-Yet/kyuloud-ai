@@ -25,7 +25,7 @@ public class ChatController {
 
     @PostMapping
     public ApiResponse<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
-        String reply = chatService.chat(request.message());
+        String reply = chatService.chat(request.conversationId(), request.message());
         return ApiResponse.ok(new ChatResponse(reply));
     }
 
@@ -34,6 +34,6 @@ public class ChatController {
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> stream(@Valid @RequestBody ChatRequest request) {
-        return chatService.stream(request.message());
+        return chatService.stream(request.conversationId(), request.message());
     }
 }
