@@ -1,4 +1,17 @@
 spring:
+  # Phase 2b — pgvector 영속화용 PostgreSQL (docker-compose.yml 참고)
+  datasource:
+    url: jdbc:postgresql://localhost:5432/kyuloud
+    username: kyuloud
+    password: kyuloud
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
   ai:
     ollama:
       base-url: http://localhost:11434
@@ -10,6 +23,20 @@ spring:
       embedding:
         options:
           model: nomic-embed-text
+    vectorstore:
+      pgvector:
+        # 스키마(vector_store 테이블)·확장 자동 생성
+        initialize-schema: true
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        # nomic-embed-text 임베딩 차원
+        dimensions: 768
+
+# Phase 2b — RAG 검색 파라미터 (RagProperties 바인딩)
+kyuloud:
+  rag:
+    top-k: 4
+    similarity-threshold: 0.5
 
 logging:
   level:

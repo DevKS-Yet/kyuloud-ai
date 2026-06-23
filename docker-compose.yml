@@ -1,0 +1,22 @@
+# Phase 2b — 로컬 RAG 인프라 (pgvector 확장이 포함된 PostgreSQL)
+# 기동: docker compose up -d
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: kyuloud-postgres
+    environment:
+      POSTGRES_DB: kyuloud
+      POSTGRES_USER: kyuloud
+      POSTGRES_PASSWORD: kyuloud
+    ports:
+      - "5432:5432"
+    volumes:
+      - kyuloud-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kyuloud -d kyuloud"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  kyuloud-pgdata:
