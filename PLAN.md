@@ -236,21 +236,35 @@ spring:
 
 ## 5. 개발 순서 (Phase별 상세)
 
-### Phase 0 — 프로젝트 기반 정비 (0.5일)
-1. `build.gradle`에 `spring-boot-starter-web`, `validation` 추가.
-2. 프로파일 분리(`application.yaml` / `application-local.yaml`), Ollama base-url 설정.
-3. 공통 응답 래퍼(`ApiResponse`)와 `GlobalExceptionHandler` 작성.
-4. Ollama 로컬 구동 + 모델 pull 확인.
-- **완료 기준**: 앱 부팅 성공, `/actuator/health` 또는 ping 엔드포인트 응답.
+### Phase 0 — 프로젝트 기반 정비 ✅ 완료
+1. `build.gradle`에 `spring-boot-starter-web`, `validation`, `actuator` 추가.
+2. 프로파일 분리(`application.yaml` / `application-local.yaml`), Ollama base-url + 모델(`gemma4:e4b`) 설정.
+3. 공통 응답 래퍼(`ApiResponse`), `BusinessException`, `GlobalExceptionHandler` 작성.
+4. 동작 확인용 `PingController`(`GET /api/ping`) 작성.
+- **완료 기준**: `compileJava` 성공. (앱 부팅/HTTP 검증은 추후 수행, Ollama 모델 pull은 Phase 1에서 필요.)
 
-### Phase 1 — Simple Chat (1~2일)
+### Phase 1 — Simple Chat
+소스 수정 범위가 넓어 하위 단계로 나누어 각 단계마다 컴파일/동작을 검증한다.
+
+#### Phase 1a — 기본 단발 채팅
 1. `ChatClientConfig`에서 `ChatClient.Builder`로 기본 `ChatClient` 빈 생성 + 시스템 프롬프트 지정.
-2. `ChatController` + `ChatService` 구현.
+2. `chat` 패키지: `ChatController` + `ChatService` + `ChatRequest`/`ChatResponse` DTO.
    - `POST /api/chat` : 단발 질의/응답.
-   - `GET|POST /api/chat/stream` : SSE 스트리밍(`Flux<String>`).
-3. **멀티턴**: `MessageChatMemoryAdvisor` + `ChatMemory`(InMemory) 적용, `conversationId`(세션 ID)로 대화 구분.
-4. 시스템 프롬프트 템플릿(`prompts/system-chat.st`) 분리.
-- **완료 기준**: 세션 ID 기준으로 이전 대화를 기억하며 스트리밍 응답.
+- **완료 기준**: 단발 질의에 LLM 응답 반환(`gemma4:e4b` pull 필요).
+
+#### Phase 1b — 스트리밍 응답
+1. `ChatService`에 스트리밍 메서드 추가(`Flux<String>` / `ChatClient.stream()`).
+2. `POST /api/chat/stream` : SSE(`text/event-stream`) 응답.
+- **완료 기준**: 토큰 단위 스트리밍 응답 수신.
+
+#### Phase 1c — 멀티턴 메모리
+1. `ChatMemory`(InMemory) 빈 + `MessageChatMemoryAdvisor`를 `ChatClient`에 적용.
+2. 요청에 `conversationId`(세션 ID)를 받아 대화 구분.
+- **완료 기준**: 세션 ID 기준으로 이전 대화를 기억하며 응답.
+
+#### Phase 1d — 프롬프트 템플릿 분리
+1. 시스템 프롬프트를 `prompts/system-chat.st`로 분리하고 설정에서 주입.
+- **완료 기준**: 프롬프트 외부화, 코드 변경 없이 프롬프트 수정 가능.
 
 ### Phase 2 — RAG (3~4일)
 1. **인프라**: PostgreSQL + pgvector 기동(Docker), `VectorStoreConfig` 빈 구성, 임베딩 모델 설정.
@@ -298,7 +312,7 @@ spring:
 
 ## 7. 마일스톤 체크리스트
 
-- [ ] **M0** web/validation 의존성 추가, 프로파일·예외 처리, Ollama 연동 확인
+- [x] **M0** web/validation 의존성 추가, 프로파일·예외 처리, ping 엔드포인트 (✅ Phase 0)
 - [ ] **M1** Simple Chat (스트리밍 + 멀티턴 메모리)
 - [ ] **M2** RAG (문서 적재 + 검색 + 출처 응답)
 - [ ] **M3** Agent (tool-calling + RAG tool + ReAct 루프)
