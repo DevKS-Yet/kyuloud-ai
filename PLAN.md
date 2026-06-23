@@ -279,11 +279,13 @@ spring:
 - **완료 기준**: 적재한 문서 내용에 근거해 답변하고, 근거 없으면 "모른다"고 응답(환각 억제). ✅ 적재 사실 정답 + 없는 사실 "모른다" 검증 완료.
 - **사전 준비**: `ollama pull nomic-embed-text` (완료).
 
-#### Phase 2b — 영속화/확장 (이후)
-1. **인프라**: PostgreSQL + pgvector 기동(Docker), `VectorStore`를 pgvector로 교체.
-2. **Ingest 확장**: 파일 업로드(`DocumentReader` Tika/PDF), 문서 메타데이터 RDB 저장.
-3. **Retrieval 고도화**: `RetrievalAugmentationAdvisor`(query 변환·재정렬), 출처(citation) 반환.
-4. 검색 파라미터(topK, similarityThreshold) 튜닝 및 프롬프트 템플릿(`system-rag.st`) 정비.
+#### Phase 2b — 영속화/확장 🚧 코드 구현 완료 · 검증 대기
+1. **인프라**: PostgreSQL + pgvector 기동(`docker-compose.yml`, `pgvector/pgvector:pg16`). `VectorStore`를 pgvector 자동 구성으로 교체(`spring-ai-starter-vector-store-pgvector`, `initialize-schema`/HNSW/COSINE/dim 768). 인메모리 `SimpleVectorStore`는 `poc` 프로파일 폴백으로 보존.
+2. **Ingest 확장**: 파일 업로드(`POST /api/documents` multipart + `TikaDocumentReader`), 문서 메타데이터 RDB 저장(`DocumentMetadata` 엔티티/리포지토리), 목록 조회(`GET /api/documents`).
+3. **Retrieval 고도화**: `RetrievalAugmentationAdvisor` + `RewriteQueryTransformer`(query 재작성) + `VectorStoreDocumentRetriever`, 출처(citation) 반환(`RagChatResponse`).
+4. 검색 파라미터(topK, similarityThreshold)를 `kyuloud.rag.*`로 외부화(`RagProperties`), 프롬프트 템플릿(`system-rag.st`) 추가.
+- **검증 대기 항목(작업 PC 미실행)**: ① `docker compose up -d`로 pgvector 기동, ② `compileJava`/부팅, ③ 파일 적재→`/api/rag/chat` 출처 포함 응답, ④ 근거 없는 질의 "모른다" 응답.
+- **참고**: JPA·pgvector 도입으로 기본 프로파일 부팅에 PostgreSQL이 필요(컨텍스트 로드 테스트 포함). 오프라인 검증 시 `poc` 프로파일은 벡터스토어만 인메모리이며 메타데이터 저장은 여전히 DB 필요.
 
 ### Phase 3 — Agent Chat (4~6일)
 1. **Tool 기본**: `@Tool` 어노테이션으로 단순 도구(DateTimeTool 등) 등록 → tool-calling 동작 검증.
