@@ -1,5 +1,6 @@
 package com.kyuloud.ai.config;
 
+import com.kyuloud.ai.common.advisor.LoggingAdvisor;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -13,6 +14,8 @@ import org.springframework.core.io.Resource;
  * 공통 ChatClient 빈 구성.
  * 시스템 프롬프트는 외부 리소스(prompts/system-chat.st)에서 주입하고,
  * 대화 메모리 advisor를 기본 적용한다. (RAG/Tool 등은 이후 단계에서 추가)
+ *
+ * <p>Phase 4a — 모든 ChatClient 호출을 {@link LoggingAdvisor} 로 감싸 요청·응답·토큰·지연을 로깅한다.
  */
 @Configuration
 public class ChatClientConfig {
@@ -22,10 +25,11 @@ public class ChatClientConfig {
 
     @Bean
     @Primary
-    public ChatClient chatClient(ChatClient.Builder builder, ChatMemory chatMemory) {
+    public ChatClient chatClient(ChatClient.Builder builder, ChatMemory chatMemory,
+                                 LoggingAdvisor loggingAdvisor) {
         return builder
                 .defaultSystem(systemPrompt)
-                .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
+                .defaultAdvisors(loggingAdvisor, MessageChatMemoryAdvisor.builder(chatMemory).build())
                 .build();
     }
 
@@ -37,7 +41,9 @@ public class ChatClientConfig {
      * 도구가 없어 계획 단계에서 섣불리 도구를 호출하지 않는다(실제 도구 실행은 {@code chatClient} 가 담당).
      */
     @Bean
-    public ChatClient plannerChatClient(ChatClient.Builder builder) {
-        return builder.build();
+    public ChatClient plannerChatClient(ChatClient.Builder builder, LoggingAdvisor loggingAdvisor) {
+        return builder
+                .defaultAdvisors(loggingAdvisor)
+                .build();
     }
 }

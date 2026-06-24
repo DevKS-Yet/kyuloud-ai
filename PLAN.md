@@ -281,12 +281,12 @@ spring:
 - **완료 기준**: 적재한 문서 내용에 근거해 답변하고, 근거 없으면 "모른다"고 응답(환각 억제). ✅ 적재 사실 정답 + 없는 사실 "모른다" 검증 완료.
 - **사전 준비**: `ollama pull nomic-embed-text` (완료).
 
-#### Phase 2b — 영속화/확장 🚧 코드 구현 완료 · 검증 대기
+#### Phase 2b — 영속화/확장 ✅ 완료
 1. **인프라**: PostgreSQL + pgvector 기동(`docker-compose.yml`, `pgvector/pgvector:pg16`). `VectorStore`를 pgvector 자동 구성으로 교체(`spring-ai-starter-vector-store-pgvector`, `initialize-schema`/HNSW/COSINE/dim 768). 인메모리 `SimpleVectorStore`는 `poc` 프로파일 폴백으로 보존.
 2. **Ingest 확장**: 파일 업로드(`POST /api/documents` multipart + `TikaDocumentReader`), 문서 메타데이터 RDB 저장(`DocumentMetadata` 엔티티/리포지토리), 목록 조회(`GET /api/documents`).
 3. **Retrieval 고도화**: `RetrievalAugmentationAdvisor` + `RewriteQueryTransformer`(query 재작성) + `VectorStoreDocumentRetriever`, 출처(citation) 반환(`RagChatResponse`).
 4. 검색 파라미터(topK, similarityThreshold)를 `kyuloud.rag.*`로 외부화(`RagProperties`), 프롬프트 템플릿(`system-rag.st`) 추가.
-- **검증 진행**: ① `docker compose up -d`로 pgvector 기동 ✅, ② `compileJava`/부팅 ✅ (앱 정상 실행 확인), ③ 파일 적재→`/api/rag/chat` 출처 포함 응답 ⬜, ④ 근거 없는 질의 "모른다" 응답 ⬜. (③·④ 기능 검증은 사용자가 Swagger UI로 직접 진행 중)
+- **검증 완료** ✅: ① `docker compose up -d`로 pgvector 기동, ② `compileJava`/부팅, ③ 파일 적재→`/api/rag/chat` 출처 포함 응답, ④ 근거 없는 질의 "모른다" 응답.
 - **참고**: JPA·pgvector 도입으로 기본 프로파일 부팅에 PostgreSQL이 필요(컨텍스트 로드 테스트 포함). 오프라인 검증 시 `poc` 프로파일은 벡터스토어만 인메모리이며 메타데이터 저장은 여전히 DB 필요.
 
 ### Phase 3 — Agent Chat
@@ -324,18 +324,18 @@ spring:
 #### Phase 3d — 확장 (선택)
 > **진행 방식**: 4개 항목은 실패 도메인(스트리밍 복잡도 / 외부 API / 외부 MCP 서버 / 아키텍처)이 서로 독립적이므로, 다른 단계와 동일하게 **위험·의존성 오름차순으로 세분화**해 각 단계마다 compile + 통합테스트로 격리 검증한다. 모두 선택 항목이라 취사선택·중단이 가능하다.
 
-##### Phase 3d-1 — 스트리밍 tool-calling 🚧 코드 구현 완료 · 검증 대기
+##### Phase 3d-1 — 스트리밍 tool-calling ✅ 완료
 - `POST /api/agent/chat/stream` — `AgentService.stream()`(`ChatClient.stream().content()`)으로 도구 호출 + 최종 답변 SSE 스트리밍.
 - **`ToolCallTracker` 보강**: `@RequestScope` → ThreadLocal 싱글톤으로 전환. 스트리밍 시 도구 실행이 reactor 스레드(요청 스레드 밖)에서 일어나도 `record()` 가 예외 없이 graceful degrade. blocking 경로는 동일 스레드라 추적 정확(응답 후 `reset()` 으로 누수 방지). 스트리밍 응답엔 `toolsUsed` 미포함.
-- **완료 기준**: Agent가 도구를 호출하면서도 응답을 SSE로 스트리밍. **검증 진행**: `compileJava` ✅, 실호출 검증 ⬜.
+- **완료 기준**: Agent가 도구를 호출하면서도 응답을 SSE로 스트리밍. **검증 완료** ✅: `compileJava` + 실호출 검증 완료.
 
-##### Phase 3d-2 — WebSearchTool 🚧 코드 구현 완료 · 검증 대기
+##### Phase 3d-2 — WebSearchTool ✅ 완료
 - **방식**: SearXNG 자체 호스팅(API 키·요금 없음, 로컬 완결). `docker-compose.yml`에 `searxng/searxng:latest` 추가(포트 8888), `searxng/settings.yml`로 JSON 응답·엔진 구성.
 - `tool/WebSearchTool` — `RestClient`로 SearXNG `/search?format=json` 호출 → 제목·URL·요약을 번호 매긴 문자열로 반환. SearXNG 미기동 시 예외 대신 안내 메시지 반환(graceful degrade).
 - `config/SearchProperties` — `kyuloud.search.searxng-url`·`max-results` 외부화.
 - `AgentService`에 `WebSearchTool` 추가(`.tools(..., webSearchTool)`). `system-agent.st`에 웹 검색 규칙 추가.
 - **사전 준비**: `docker compose up -d`(SearXNG 기동). **완료 기준**: 최신 정보 질의 시 Agent가 `searchWeb` 도구를 호출해 답변, `toolsUsed`에 `"searchWeb"` 기록.
-- **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜.
+- **검증 완료** ✅: `compileJava` + 실호출 검증 완료.
 
 ##### Phase 3d-3 — MCP Client 🚧 코드 구현 완료 · 검증 대기
 - **의존성**: `spring-ai-starter-mcp-client` 추가 (Spring MVC 호환 httpclient 기반, BOM 2.0.0 포함).
@@ -345,18 +345,32 @@ spring:
 - **완료 기준**: "현재 프로젝트 파일 목록 보여줘" 등 IntelliJ 도구를 Agent가 호출해 IDE 정보 기반 답변.
 - **검증 진행**: `compileJava` (경고 없음) ✅. 실호출 검증 ⬜ (IntelliJ MCP Server 활성화 필요).
 
-##### Phase 3d-4 — Planner 🚧 코드 구현 완료 · 검증 대기 (선택, 아키텍처 확장)
+##### Phase 3d-4 — Planner ✅ 완료 (선택, 아키텍처 확장)
 - **방식**: Plan-and-Execute. 복잡한 multi-step 요청을 `PlannerService` 가 순서가 있는 단계(`Plan`/`PlanStep`)로 분해(구조화 출력) → `AgentService.planAndExecute` 가 각 단계를 도구 탑재 `chatClient` 로 순차 실행 → `PlannerService.synthesize` 로 결과 합성.
 - **격리**: 단계 실행은 사용자 대화(`cid`)와 분리된 임시 `planCid` 메모리에서 수행(앞 단계 결과를 메모리로 공유). 실행 종료 시 `ChatMemory.clear(planCid)` 로 정리해 사용자 대화 오염·메모리 누수 방지. 단일 단계면 합성 LLM 호출 생략.
 - **전용 ChatClient**: 계획·합성은 도구·메모리 없는 `plannerChatClient` 빈으로 수행(주 `chatClient` 는 `@Primary`). 프롬프트는 `system-planner.st`·`system-synthesis.st` 로 외부화.
 - **API**: `POST /api/agent/plan` → `PlanResponse`(계획·단계별 결과·최종 답변·`toolsUsed`).
-- **완료 기준**: 다단계 작업을 계획→실행→합성으로 분리 수행. **검증 진행**: `compileJava` ✅, 실호출 검증 ⬜.
+- **완료 기준**: 다단계 작업을 계획→실행→합성으로 분리 수행. **검증 완료** ✅: `compileJava` + 실호출 검증 완료.
 
 ### Phase 4 — 운영·품질 강화 (지속)
-- 가드레일 Advisor(PII/금칙어), 요청·응답 로깅/추적(observability).
-- 토큰·지연 메트릭(Micrometer), Rate limiting.
-- 대화 메모리 JDBC 영속화로 전환, 세션 만료 정책.
-- 테스트: 단위 + `@SpringBootTest` 통합 + 평가(RAG 정확도) 시나리오.
+> **진행 방식**: 4개 워크스트림(관측성 / 가드레일 / 메모리 영속화 / 테스트)은 서로 독립적이므로, 다른 Phase 와 동일하게 **위험·의존성 오름차순(4a~4d)으로 세분화**해 각 단계마다 compile + 검증으로 격리 진행한다.
+
+#### Phase 4a — 관측 로깅 Advisor 🚧 코드 구현 완료 · 검증 대기
+- `common/advisor/LoggingAdvisor` — `BaseAdvisor`(call+stream) 구현. 모든 `ChatClient` 호출을 가장 바깥에서 감싸 **요청(사용자 메시지) + 응답(답변·토큰 사용량·지연(ms))** 을 로깅. 지연은 `before`에서 시작 시각을 요청 컨텍스트에 담아 `after`에서 측정. order = `DEFAULT_CHAT_MEMORY_PRECEDENCE_ORDER - 100`(메모리/RAG/도구보다 바깥).
+- `ChatClientConfig` — 주 `chatClient`·`plannerChatClient` 양쪽 `defaultAdvisors` 에 등록.
+- **완료 기준**: 모든 LLM 호출에 요청/응답/토큰/지연 로그가 남는다. **검증 진행**: `compileJava` ✅, 실호출 로그 확인 ⬜.
+
+#### Phase 4b — 메트릭(Micrometer) ⬜
+- 토큰·지연 메트릭을 Micrometer 로 노출(actuator `/metrics`). 모델·엔드포인트별 태깅. (옵션) Rate limiting.
+
+#### Phase 4c — 가드레일 Advisor ⬜
+- 입력 PII/금칙어 필터 Advisor(요청 차단/마스킹) + 출력 후처리. 차단 시 표준 에러 응답(`ApiResponse`).
+
+#### Phase 4d — 대화 메모리 JDBC 영속화 ⬜
+- InMemory `MessageWindowChatMemory` → JDBC 영속화(`spring-ai-starter-model-chat-memory-repository-jdbc` 등)로 전환. 세션 만료 정책.
+
+#### Phase 4e — 테스트 ⬜
+- 단위 테스트(도구·Planner·Advisor 로직) + `@SpringBootTest` 통합(모킹된 ChatModel/VectorStore) + RAG 정확도 평가 시나리오. 환경 독립적 회귀 안전망 확보.
 
 ---
 
@@ -381,7 +395,7 @@ spring:
 
 - [x] **M0** web/validation 의존성 추가, 프로파일·예외 처리, ping 엔드포인트 (✅ Phase 0)
 - [x] **M1** Simple Chat (스트리밍 + 멀티턴 메모리 + 프롬프트 외부화) (✅ Phase 1)
-- [ ] **M2** RAG (문서 적재 + 검색 + 출처 응답)
+- [x] **M2** RAG (문서 적재 + 검색 + 출처 응답) (✅ Phase 2a~2b 검증 완료)
 - [x] **M3** Agent (tool-calling + RAG tool + ReAct 루프) (✅ Phase 3a~3c, 통합테스트 정상)
 - [ ] **M4** 운영 강화 (가드레일/관측/영속화/테스트)
 
