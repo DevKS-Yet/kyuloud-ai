@@ -308,10 +308,11 @@ spring:
 - **완료 기준**: "지금 몇 시야?" / "오늘 무슨 요일이야?" → LLM이 `DateTimeTool`을 호출해 실제 시각 기반으로 응답.
 - **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜ (tool-capable 모델 필요 — `gemma4:e4b`는 로컬 미존재, `llama3.1:8b`가 tool 지원 대안).
 
-#### Phase 3b — RAG를 Tool로 노출 (RagSearchTool)
-1. `tool/RagSearchTool` — `@Tool`: query를 받아 `vectorStore.similaritySearch`(topK/threshold = `RagProperties`) → 검색 청크 + 출처(source)를 문자열로 반환.
-2. `AgentService`에 `RagSearchTool` 추가 등록.
+#### Phase 3b — RAG를 Tool로 노출 (RagSearchTool) 🚧 코드 구현 완료 · 검증 대기
+1. `tool/RagSearchTool` — `@Tool`/`@ToolParam`: query를 받아 `vectorStore.similaritySearch`(topK/threshold = `RagProperties`) → 검색 청크 + 출처(source)를 번호 매긴 문자열로 반환.
+2. `AgentService`에 `RagSearchTool` 추가 등록(`.tools(dateTimeTool, ragSearchTool)`), `system-agent.st`에 문서 검색 규칙 추가.
 - **완료 기준**: 적재 문서 관련 질문 시 Agent가 **스스로** `RagSearchTool`을 호출해 근거 기반 답변(2b의 advisor 자동 주입과 달리 호출 여부를 LLM이 판단).
+- **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜ (tool-capable 모델 + pgvector 적재 문서 필요).
 
 #### Phase 3c — 멀티 툴 오케스트레이션 + 복합 질의
 1. `tool/DocumentCatalogTool` — `DocumentMetadataRepository`로 적재 문서 목록/메타 조회.

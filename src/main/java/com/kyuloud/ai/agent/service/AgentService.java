@@ -2,6 +2,7 @@ package com.kyuloud.ai.agent.service;
 
 import com.kyuloud.ai.agent.dto.AgentResponse;
 import com.kyuloud.ai.agent.tool.DateTimeTool;
+import com.kyuloud.ai.agent.tool.RagSearchTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -25,13 +26,15 @@ public class AgentService {
 
     private final ChatClient chatClient;
     private final DateTimeTool dateTimeTool;
+    private final RagSearchTool ragSearchTool;
 
     @Value("classpath:prompts/system-agent.st")
     private Resource agentSystemPrompt;
 
-    public AgentService(ChatClient chatClient, DateTimeTool dateTimeTool) {
+    public AgentService(ChatClient chatClient, DateTimeTool dateTimeTool, RagSearchTool ragSearchTool) {
         this.chatClient = chatClient;
         this.dateTimeTool = dateTimeTool;
+        this.ragSearchTool = ragSearchTool;
     }
 
     public AgentResponse chat(String conversationId, String message) {
@@ -41,7 +44,7 @@ public class AgentService {
         String reply = chatClient.prompt()
                 .system(agentSystemPrompt)
                 .user(message)
-                .tools(dateTimeTool)
+                .tools(dateTimeTool, ragSearchTool)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid))
                 .call()
                 .content();
