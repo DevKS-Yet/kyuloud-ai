@@ -1,6 +1,9 @@
 package com.kyuloud.ai.agent.service;
 
+import com.kyuloud.ai.agent.clarify.ClarificationService;
+import com.kyuloud.ai.agent.clarify.ClarificationVerdict;
 import com.kyuloud.ai.agent.dto.AgentResponse;
+import com.kyuloud.ai.agent.dto.ClarifyResponse;
 import com.kyuloud.ai.agent.dto.IterationTrace;
 import com.kyuloud.ai.agent.dto.LoopResponse;
 import com.kyuloud.ai.agent.dto.PlanResponse;
@@ -20,6 +23,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
@@ -61,6 +65,7 @@ public class AgentService {
     private final ToolCallTracker toolCallTracker;
     private final PlannerService plannerService;
     private final EvaluatorService evaluatorService;
+    private final ClarificationService clarificationService;
     private final AgentLoopProperties loopProperties;
     private final ChatMemory chatMemory;
 
@@ -89,6 +94,7 @@ public class AgentService {
                         ToolCallTracker toolCallTracker,
                         PlannerService plannerService,
                         EvaluatorService evaluatorService,
+                        ClarificationService clarificationService,
                         AgentLoopProperties loopProperties,
                         ChatMemory chatMemory,
                         ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider) {
@@ -100,6 +106,7 @@ public class AgentService {
         this.toolCallTracker = toolCallTracker;
         this.plannerService = plannerService;
         this.evaluatorService = evaluatorService;
+        this.clarificationService = clarificationService;
         this.loopProperties = loopProperties;
         this.chatMemory = chatMemory;
         this.mcpProvider = mcpProvider;
@@ -269,6 +276,23 @@ public class AgentService {
     }
 
     /**
+     * Phase 5b — 명확화(Clarification).
+     *
+     * <p>RAG 와 반대로, 답하기 위해 부족한 정보를 <em>사용자에게 되물어</em> 채우는 Human-in-the-loop 단계.
+     * 답변하지 않고, 이 질문에 제대로 답하려면 무엇을 되물어야 하는지만 판단해 반환한다(되물을 게 없으면
+     * {@code needsClarification=false}). 대화 맥락({@code cid} 의 기록)을 함께 보고 이미 아는 정보는 되묻지 않는다.
+     * 읽기 전용이라 메모리에 기록하지 않는다(실제 답변 턴은 이후 chat/plan/loop 호출에서 일어난다).
+     */
+    public ClarifyResponse clarify(String conversationId, String message) {
+        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String context = renderHistory(chatMemory.get(cid));
+        ClarificationVerdict verdict = clarificationService.assess(message, context);
+        log.debug("agent clarify: cid={}, needsClarification={}, message={}",
+                cid, verdict.needsClarification(), message);
+        return new ClarifyResponse(message, verdict.needsClarification(), verdict.questions());
+    }
+
+    /**
      * 기본 에이전트 시스템 프롬프트({@code system-agent.st})로 요청 스펙을 구성한다. chat/stream/plan 단계 실행이 공유한다.
      */
     private ChatClient.ChatClientRequestSpec agentSpec(String cid, String userMessage) {
@@ -343,5 +367,26 @@ public class AgentService {
     /** 사용자 대화({@code cid})에 '원 질문 → 최종 답변' 한 턴만 기록한다(중간 잡음 제외). plan/loop 가 공유한다. */
     private void recordTurn(String cid, String userMessage, String reply) {
         chatMemory.add(cid, List.of(new UserMessage(userMessage), new AssistantMessage(reply)));
+    }
+
+    /** Phase 5b — 대화 기록을 명확화 판단용 컨텍스트 텍스트로 렌더링한다(역할 라벨 + 내용). */
+    private String renderHistory(List<Message> history) {
+        if (history == null || history.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Message m : history) {
+            sb.append(roleLabel(m.getMessageType())).append(": ").append(m.getText()).append("\n");
+        }
+        return sb.toString();
+    }
+
+    private String roleLabel(MessageType type) {
+        return switch (type) {
+            case USER -> "사용자";
+            case ASSISTANT -> "어시스턴트";
+            case SYSTEM -> "시스템";
+            default -> type.getValue();
+        };
     }
 }

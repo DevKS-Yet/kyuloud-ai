@@ -403,6 +403,13 @@ spring:
 - **트레이드오프**: 평가마다 LLM 호출 추가(지연·비용↑), 자기평가 품질은 모델 의존(필요 시 평가용 모델 분리 검토).
 - **완료 기준**: 빈약한 근거면 추가 검색을 거쳐 답하고, 충분하면 조기 종료. **검증 진행**: `compileJava` ✅, 실호출(평가→추가검색→답변) 확인 ⬜.
 
+#### Phase 5b — 명확화(Clarification) 엔드포인트 🚧 코드 구현 완료 · 검증 대기
+> **개념**: RAG(QuestionAnswerAdvisor)는 부족한 정보를 *문서에서* 채우지만, 명확화는 부족한 정보를 *사용자에게 되물어* 채우는 Human-in-the-loop 패턴(MCP 의 elicitation 과 같은 결). advisor 가 아니라 **답변 전 게이트** 단계이며, REST(stateless)라 호출 중 멈춰 묻지 않고 "되묻는 질문"을 응답으로 돌려준다. 사용자가 고른 답을 더해 같은 `conversationId` 로 답변 엔드포인트를 다시 호출한다.
+- **판단기**: `agent/clarify/ClarificationService` — 도구·메모리 없는 보조 ChatClient(`plannerChatClient` 재사용)로 구조화 출력 `ClarificationVerdict{needsClarification, questions[]}` 생성. `ClarifyingQuestion{question, options[]}`. 프롬프트 `system-clarify.st`. 판단 실패/모순(되묻는다면서 질문 없음) 시 "되묻지 않음" 폴백.
+- **대화 맥락**: `AgentService.clarify` 가 `chatMemory.get(cid)` 기록을 텍스트로 렌더해 함께 전달 → 이미 아는 정보는 되묻지 않음. 읽기 전용(메모리 미기록).
+- **API**: `POST /api/agent/clarify` → `ClarifyResponse{request, needsClarification, questions[]}`. (독립 엔드포인트; 추후 chat/loop 선행 게이트로 흡수 가능)
+- **완료 기준**: 모호한 질문 → 선택지 포함 되묻기 / 충분한 질문 → needsClarification=false. **검증 진행**: `compileJava` ✅, 실호출 확인 ⬜.
+
 ---
 
 ## 6. API 엔드포인트 요약 (목표)
@@ -418,6 +425,7 @@ spring:
 | 3 | POST | `/api/agent/chat/stream` | Agent 스트리밍 채팅 (SSE, 3d-1) |
 | 3 | POST | `/api/agent/plan` | Agent Plan-and-Execute (계획→실행→합성, 3d-4) |
 | 5 | POST | `/api/agent/loop` | Agent 평가 루프 (행동→평가→추가행동→답변, 5a) |
+| 5 | POST | `/api/agent/clarify` | 명확화 — 답변 전 사용자에게 되물을 정보 판단 (5b) |
 
 공통: 요청에 `conversationId`(세션 식별자)를 포함해 메모리/맥락을 관리한다.
 

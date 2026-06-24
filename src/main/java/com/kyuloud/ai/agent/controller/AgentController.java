@@ -1,6 +1,7 @@
 package com.kyuloud.ai.agent.controller;
 
 import com.kyuloud.ai.agent.dto.AgentResponse;
+import com.kyuloud.ai.agent.dto.ClarifyResponse;
 import com.kyuloud.ai.agent.dto.LoopResponse;
 import com.kyuloud.ai.agent.dto.PlanResponse;
 import com.kyuloud.ai.agent.service.AgentService;
@@ -56,6 +57,16 @@ public class AgentController {
     @PostMapping("/loop")
     public ApiResponse<LoopResponse> loop(@Valid @RequestBody ChatRequest request) {
         LoopResponse response = agentService.loop(request.conversationId(), request.message());
+        return ApiResponse.ok(response);
+    }
+
+    /**
+     * Phase 5b — 명확화. 답변하기 전에, 질문에 제대로 답하려면 사용자에게 되물어야 할 정보가 있는지 판단한다.
+     * 되물을 게 있으면 선택지 포함 질문을 반환(클라가 사용자에게 보여줌), 없으면 바로 답변 엔드포인트를 호출하면 된다.
+     */
+    @PostMapping("/clarify")
+    public ApiResponse<ClarifyResponse> clarify(@Valid @RequestBody ChatRequest request) {
+        ClarifyResponse response = agentService.clarify(request.conversationId(), request.message());
         return ApiResponse.ok(response);
     }
 }
