@@ -38,6 +38,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     // Swagger UI / OpenAPI 3.1 — Spring Boot 4 지원 라인(3.0.x)
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
+    // Phase 3d-3 — MCP Client (IntelliJ 등 MCP 서버 연동, Spring MVC 호환 httpclient 기반)
+    implementation 'org.springframework.ai:spring-ai-starter-mcp-client'
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     annotationProcessor 'org.projectlombok:lombok'

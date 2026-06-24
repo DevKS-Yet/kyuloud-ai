@@ -337,9 +337,13 @@ spring:
 - **사전 준비**: `docker compose up -d`(SearXNG 기동). **완료 기준**: 최신 정보 질의 시 Agent가 `searchWeb` 도구를 호출해 답변, `toolsUsed`에 `"searchWeb"` 기록.
 - **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜.
 
-##### Phase 3d-3 — MCP Client ⬜ (외부 표준 도구)
-- `spring-ai-starter-mcp-client` 의존성 추가, 외부 MCP 서버료 연동으로 표준 도구 확장.
-- **사전 준비**: 연동할 MCP 서버. **완료 기준**: MCP 서버가 노출한 도구를 Agent가 호출.
+##### Phase 3d-3 — MCP Client 🚧 코드 구현 완료 · 검증 대기
+- **의존성**: `spring-ai-starter-mcp-client` 추가 (Spring MVC 호환 httpclient 기반, BOM 2.0.0 포함).
+- **대상**: IntelliJ IDEA 내장 MCP 서버 (Settings → Tools → MCP Server → Enable). 50+ 도구(파일·검색·디버거·DB·터미널·리팩토링 등) 노출.
+- **설정**: `spring.ai.mcp.client.sse.connections.intellij.url/sse-endpoint` — 포트는 동적 할당이므로 IntelliJ **Copy SSE Config** 에서 확인 후 `application-local.yaml` 기입. IntelliJ 미실행 시 `enabled: false` 로 비활성화.
+- **AgentService**: `ObjectProvider<SyncMcpToolCallbackProvider>` 로 optional 주입(IntelliJ 꺼져도 앱 기동). MCP 연결 시 `provider.getToolCallbacks()` → `.tools((Object[])...)` 로 전달 — `toolCallbacks()` deprecated API 우회, `tools(Object...)` 비-deprecated 경로 사용.
+- **완료 기준**: "현재 프로젝트 파일 목록 보여줘" 등 IntelliJ 도구를 Agent가 호출해 IDE 정보 기반 답변.
+- **검증 진행**: `compileJava` (경고 없음) ✅. 실호출 검증 ⬜ (IntelliJ MCP Server 활성화 필요).
 
 ##### Phase 3d-4 — Planner ⬜ (선택, 아키텍처 확장)
 - 복잡한 multi-step 작업의 명시적 계획 수립 단계(`PlannerService`) 분리. 실제 필요성이 확인된 뒤 착수.
