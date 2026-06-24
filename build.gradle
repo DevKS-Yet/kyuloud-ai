@@ -32,6 +32,8 @@ dependencies {
     implementation 'org.springframework.ai:spring-ai-starter-vector-store-pgvector'
     implementation 'org.springframework.ai:spring-ai-tika-document-reader'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    // Phase 4d — 대화 메모리 JDBC 영속화(JdbcChatMemoryRepository, 기존 PostgreSQL DataSource 재사용)
+    implementation 'org.springframework.ai:spring-ai-starter-model-chat-memory-repository-jdbc'
     runtimeOnly 'org.postgresql:postgresql'
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'

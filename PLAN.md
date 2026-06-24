@@ -378,8 +378,12 @@ spring:
 - `ChatClientConfig` — 양쪽 ChatClient `defaultAdvisors` 최상단에 등록.
 - **완료 기준**: 금칙어 요청 → 400 차단, PII 포함 요청 → 마스킹되어 처리. **검증 진행**: `compileJava` ✅, 실호출 차단/마스킹 확인 ⬜.
 
-#### Phase 4d — 대화 메모리 JDBC 영속화 ⬜
-- InMemory `MessageWindowChatMemory` → JDBC 영속화(`spring-ai-starter-model-chat-memory-repository-jdbc` 등)로 전환. 세션 만료 정책.
+#### Phase 4d — 대화 메모리 JDBC 영속화 🚧 코드 구현 완료 · 검증 대기
+- **의존성**: `spring-ai-starter-model-chat-memory-repository-jdbc`(BOM 2.0.0). 기존 pgvector용 PostgreSQL `DataSource` 를 재사용.
+- `ChatMemoryConfig` — `new InMemoryChatMemoryRepository()` → 자동 구성된 `ChatMemoryRepository`(=`JdbcChatMemoryRepository`) 주입. `MessageWindowChatMemory`(max 20) 윈도우는 유지.
+- **스키마**: `spring.ai.chat.memory.repository.jdbc.initialize-schema: always`(PostgreSQL 비임베디드라 always 필요, `SPRING_AI_CHAT_MEMORY` 테이블 자동 생성, 스크립트에 `IF NOT EXISTS` 포함이라 재기동 안전).
+- **효과**: 재기동해도 `conversationId` 별 대화 맥락이 유지된다. Planner 임시 `planCid` 도 동일 저장소를 쓰되 실행 후 `ChatMemory.clear` 로 정리(누수 없음).
+- **완료 기준**: 앱 재기동 후 동일 `conversationId` 로 이전 대화를 기억. **검증 진행**: `compileJava`/의존성 해석 ✅, 부팅·재기동 후 기억 유지 확인 ⬜.
 
 #### Phase 4e — 테스트 ⬜
 - 단위 테스트(도구·Planner·Advisor 로직) + `@SpringBootTest` 통합(모킹된 ChatModel/VectorStore) + RAG 정확도 평가 시나리오. 환경 독립적 회귀 안전망 확보.
