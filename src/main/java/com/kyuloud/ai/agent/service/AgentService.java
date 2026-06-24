@@ -148,7 +148,9 @@ public class AgentService {
      */
     public PlanResponse planAndExecute(String conversationId, String message) {
         String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
-        String planCid = "plan-" + cid + "-" + UUID.randomUUID();
+        // JDBC 영속 메모리의 conversation_id 컬럼이 VARCHAR(36)(=UUID 크기)이므로 임시 ID 는 36자 UUID 만 사용한다.
+        // (접두사/cid 를 덧붙이면 36자를 초과해 적재 시 'value too long' 오류가 난다.)
+        String planCid = UUID.randomUUID().toString();
         log.debug("agent plan-and-execute: cid={}, planCid={}, message={}", cid, planCid, message);
 
         try {
