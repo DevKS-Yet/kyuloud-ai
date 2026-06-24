@@ -347,7 +347,7 @@ spring:
 
 ##### Phase 3d-4 — Planner ✅ 완료 (선택, 아키텍처 확장)
 - **방식**: Plan-and-Execute. 복잡한 multi-step 요청을 `PlannerService` 가 순서가 있는 단계(`Plan`/`PlanStep`)로 분해(구조화 출력) → `AgentService.planAndExecute` 가 각 단계를 도구 탑재 `chatClient` 로 순차 실행 → `PlannerService.synthesize` 로 결과 합성.
-- **격리**: 단계 실행은 사용자 대화(`cid`)와 분리된 임시 `planCid` 메모리에서 수행(앞 단계 결과를 메모리로 공유). 실행 종료 시 `ChatMemory.clear(planCid)` 로 정리해 사용자 대화 오염·메모리 누수 방지. 단일 단계면 합성 LLM 호출 생략.
+- **대화 맥락**: 단계 실행은 임시 `planCid` 에서 수행하되, 시작 시 사용자 실제 대화 기록(`chatMemory.get(cid)`)을 `planCid` 에 시드해 단계들이 이전 맥락(예: 사용자 이름)을 인지한다(앞 단계 결과도 `planCid` 로 공유). 종료 시 중간 잡음은 `ChatMemory.clear(planCid)` 로 버리고, 사용자 대화(`cid`)에는 **원 질문 → 최종 답변** 한 턴만 기록해 다음 대화로 이어지게 한다. 즉 plan 도 `chat` 처럼 대화 맥락을 읽고 이어가되 내부 단계로 메모리를 오염시키지 않는다. 단일 단계면 합성 LLM 호출 생략.
 - **전용 ChatClient**: 계획·합성은 도구·메모리 없는 `plannerChatClient` 빈으로 수행(주 `chatClient` 는 `@Primary`). 프롬프트는 `system-planner.st`·`system-synthesis.st` 로 외부화.
 - **API**: `POST /api/agent/plan` → `PlanResponse`(계획·단계별 결과·최종 답변·`toolsUsed`).
 - **완료 기준**: 다단계 작업을 계획→실행→합성으로 분리 수행. **검증 완료** ✅: `compileJava` + 실호출 검증 완료.
@@ -383,6 +383,7 @@ spring:
 - `ChatMemoryConfig` — `new InMemoryChatMemoryRepository()` → 자동 구성된 `ChatMemoryRepository`(=`JdbcChatMemoryRepository`) 주입. `MessageWindowChatMemory`(max 20) 윈도우는 유지.
 - **스키마**: `spring.ai.chat.memory.repository.jdbc.initialize-schema: always`(PostgreSQL 비임베디드라 always 필요, `SPRING_AI_CHAT_MEMORY` 테이블 자동 생성, 스크립트에 `IF NOT EXISTS` 포함이라 재기동 안전).
 - **효과**: 재기동해도 `conversationId` 별 대화 맥락이 유지된다. Planner 임시 `planCid` 도 동일 저장소를 쓰되 실행 후 `ChatMemory.clear` 로 정리(누수 없음).
+- **⚠️ conversationId 36자 제약**: `SPRING_AI_CHAT_MEMORY.conversation_id` 컬럼이 `VARCHAR(36)`(UUID 전제)이다. 36자를 넘는 conversationId 는 적재 시 `value too long for type character varying(36)` 오류가 난다. 따라서 ① Planner 임시 ID(`planCid`)는 접두사 없이 36자 UUID 만 사용, ② `ChatRequest.conversationId` 에 `@Size(max = 36)` 검증을 둬 긴 ID 는 DB 오류(500) 대신 400 으로 차단한다.
 - **완료 기준**: 앱 재기동 후 동일 `conversationId` 로 이전 대화를 기억. **검증 진행**: `compileJava`/의존성 해석 ✅, 부팅·재기동 후 기억 유지 확인 ⬜.
 
 #### Phase 4e — 테스트 ⬜

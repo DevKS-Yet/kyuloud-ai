@@ -13,6 +13,9 @@ import com.kyuloud.ai.agent.tool.WebSearchTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.ObjectProvider;
@@ -142,9 +145,11 @@ public class AgentService {
      * 각 단계를 도구 탑재 에이전트로 <em>순차 실행</em>하고, 마지막에 결과를 <em>합성</em>해 최종 답변을 만든다.
      * 단발 {@link #chat} 의 자동 ReAct 루프와 달리 계획·실행을 명시적으로 분리해 다단계 작업을 다룬다.
      *
-     * <p>단계 실행은 사용자 대화({@code cid})와 분리된 임시 {@code planCid} 컨텍스트에서 수행한다.
-     * 한 plan 안의 단계들은 이 임시 메모리를 통해 앞 단계 결과를 공유하고, 실행이 끝나면
-     * {@link ChatMemory#clear} 로 정리해 사용자 대화 오염과 메모리 누수를 막는다.
+     * <p><b>대화 맥락 처리</b>: 단계 실행은 사용자 대화({@code cid})와 분리된 임시 {@code planCid} 에서 수행하되,
+     * 시작 시 사용자 실제 대화 기록을 {@code planCid} 에 <em>시드</em>해 단계들이 이전 맥락(예: 사용자 이름)을 인지한다.
+     * 한 plan 안의 단계들은 이 임시 메모리로 앞 단계 결과도 공유한다. 실행이 끝나면 중간 단계 잡음은 버리고
+     * (= {@code planCid} 를 {@link ChatMemory#clear}), 사용자 대화({@code cid})에는 <em>원 질문 → 최종 답변</em>
+     * 한 턴만 깔끔히 기록한다. 즉 plan 도 {@link #chat} 처럼 대화 맥락을 읽고 이어가되, 내부 단계로 메모리를 오염시키지 않는다.
      */
     public PlanResponse planAndExecute(String conversationId, String message) {
         String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
@@ -154,6 +159,12 @@ public class AgentService {
         log.debug("agent plan-and-execute: cid={}, planCid={}, message={}", cid, planCid, message);
 
         try {
+            // 사용자 실제 대화 기록을 임시 실행 컨텍스트에 시드 → 단계 실행이 이전 맥락(이름 등)을 인지한다.
+            List<Message> history = chatMemory.get(cid);
+            if (!history.isEmpty()) {
+                chatMemory.add(planCid, history);
+            }
+
             Plan plan = plannerService.plan(message);
             List<StepResult> stepResults = new ArrayList<>();
 
@@ -166,6 +177,9 @@ public class AgentService {
             String finalReply = stepResults.size() == 1
                     ? stepResults.get(0).result()
                     : plannerService.synthesize(message, stepResults);
+
+            // 중간 단계 잡음은 버리고, 사용자 대화에는 '원 질문 → 최종 답변' 한 턴만 기록해 다음 대화로 이어지게 한다.
+            chatMemory.add(cid, List.of(new UserMessage(message), new AssistantMessage(finalReply)));
 
             return new PlanResponse(message, plan.steps(), stepResults, finalReply,
                     toolCallTracker.getCalledTools());
