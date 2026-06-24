@@ -300,26 +300,26 @@ spring:
 - **RAG 노출 방식 전환**: Phase 2b의 RAG는 advisor가 자동 주입했지만, Agent에서는 **하나의 Tool(`RagSearchTool`)** 로 노출해 LLM이 *필요하다고 판단할 때만* 능동 검색하게 한다.
 - **(선택) toolContext**: `.toolContext(Map)` 로 `conversationId` 등을 도구에 전달해 컨텍스트 인지형 도구 구현 가능.
 
-#### Phase 3a — Tool 기반 PoC (DateTimeTool) 🚧 코드 구현 완료 · 검증 대기
+#### Phase 3a — Tool 기반 PoC (DateTimeTool) ✅ 완료
 1. `agent` 패키지 생성: `controller/AgentController`(`POST /api/agent/chat`), `service/AgentService`, `dto/AgentResponse`. (입력은 `RagChatController` 선례를 따라 기존 `ChatRequest` 재사용 → 중복 방지)
 2. `tool/DateTimeTool` — `@Tool` 로 현재 날짜/시각 반환(외부 의존 없음, tool-calling 동작 검증 전용).
 3. `prompts/system-agent.st` — 도구 사용 지침 + "도구로 해결 안 되면 모른다" 규칙.
 4. `AgentService`: `chatClient.prompt().system(agentPrompt).user(msg).tools(dateTimeTool).advisors(a→memory cid).call()`.
 - **완료 기준**: "지금 몇 시야?" / "오늘 무슨 요일이야?" → LLM이 `DateTimeTool`을 호출해 실제 시각 기반으로 응답.
-- **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜ (tool-capable 모델 필요 — `gemma4:e4b`는 로컬 미존재, `llama3.1:8b`가 tool 지원 대안).
+- **검증 완료** ✅: `compileJava` + 타 PC 통합테스트에서 도구 호출 동작 확인.
 
-#### Phase 3b — RAG를 Tool로 노출 (RagSearchTool) 🚧 코드 구현 완료 · 검증 대기
+#### Phase 3b — RAG를 Tool로 노출 (RagSearchTool) ✅ 완료
 1. `tool/RagSearchTool` — `@Tool`/`@ToolParam`: query를 받아 `vectorStore.similaritySearch`(topK/threshold = `RagProperties`) → 검색 청크 + 출처(source)를 번호 매긴 문자열로 반환.
 2. `AgentService`에 `RagSearchTool` 추가 등록(`.tools(dateTimeTool, ragSearchTool)`), `system-agent.st`에 문서 검색 규칙 추가.
 - **완료 기준**: 적재 문서 관련 질문 시 Agent가 **스스로** `RagSearchTool`을 호출해 근거 기반 답변(2b의 advisor 자동 주입과 달리 호출 여부를 LLM이 판단).
-- **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜ (tool-capable 모델 + pgvector 적재 문서 필요).
+- **검증 완료** ✅: 타 PC 통합테스트에서 Agent가 `RagSearchTool`을 호출해 근거 기반 답변 확인.
 
-#### Phase 3c — 멀티 툴 오케스트레이션 + 복합 질의 🚧 코드 구현 완료 · 검증 대기
+#### Phase 3c — 멀티 툴 오케스트레이션 + 복합 질의 ✅ 완료
 1. `tool/DocumentCatalogTool` — `DocumentMetadataRepository`로 적재 문서 목록/메타 조회.
 2. `AgentService`에서 DateTime + RagSearch + DocumentCatalog + Memory를 단일 `ChatClient`에 결합(`.tools(...)`).
 3. `AgentResponse.toolsUsed`로 호출된 도구 추적(tool-call trace) 노출 — `@RequestScope` `ToolCallTracker`에 각 도구가 호출 시 자기 이름 기록(요청 간 격리, 싱글톤 도구엔 스코프 프록시 주입).
 - **완료 기준**: "오늘 날짜 기준으로 X 문서 요약해줘" 같은 도구+RAG 복합 질의를 자율적으로 수행.
-- **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜ (tool-capable 모델 + pgvector 적재 문서 필요). 응답의 `toolsUsed`로 어떤 도구가 호출됐는지 확인 가능.
+- **검증 완료** ✅: 타 PC 통합테스트에서 복합 질의 자율 수행 + 응답 `toolsUsed`로 호출 도구 확인.
 
 #### Phase 3d — 확장 (선택)
 - 스트리밍 tool-calling(`POST /api/agent/chat/stream`), `WebSearchTool`/`DomainTool`, MCP Client(`spring-ai-starter-mcp-client`)로 외부 표준 도구 연동, 명시적 `Planner` 단계 분리(복잡한 multi-step 계획 수립).
@@ -352,7 +352,7 @@ spring:
 - [x] **M0** web/validation 의존성 추가, 프로파일·예외 처리, ping 엔드포인트 (✅ Phase 0)
 - [x] **M1** Simple Chat (스트리밍 + 멀티턴 메모리 + 프롬프트 외부화) (✅ Phase 1)
 - [ ] **M2** RAG (문서 적재 + 검색 + 출처 응답)
-- [ ] **M3** Agent (tool-calling + RAG tool + ReAct 루프)
+- [x] **M3** Agent (tool-calling + RAG tool + ReAct 루프) (✅ Phase 3a~3c, 통합테스트 정상)
 - [ ] **M4** 운영 강화 (가드레일/관측/영속화/테스트)
 
 ---
