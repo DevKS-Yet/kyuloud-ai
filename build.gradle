@@ -36,6 +36,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    // Phase 4b — Micrometer Prometheus 레지스트리(토큰·지연 메트릭을 /actuator/prometheus 로 노출)
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
     // Swagger UI / OpenAPI 3.1 — Spring Boot 4 지원 라인(3.0.x)
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
     // Phase 3d-3 — MCP Client (IntelliJ 등 MCP 서버 연동, Spring MVC 호환 httpclient 기반)

@@ -360,8 +360,13 @@ spring:
 - `ChatClientConfig` — 주 `chatClient`·`plannerChatClient` 양쪽 `defaultAdvisors` 에 등록.
 - **완료 기준**: 모든 LLM 호출에 요청/응답/토큰/지연 로그가 남는다. **검증 진행**: `compileJava` ✅, 실호출 로그 확인 ⬜.
 
-#### Phase 4b — 메트릭(Micrometer) ⬜
-- 토큰·지연 메트릭을 Micrometer 로 노출(actuator `/metrics`). 모델·엔드포인트별 태깅. (옵션) Rate limiting.
+#### Phase 4b — 메트릭(Micrometer) 🚧 코드 구현 완료 · 검증 대기
+- `common/advisor/MetricsAdvisor` — `BaseAdvisor` 구현(로깅과 관심사 분리). 모든 `ChatClient` 호출의 지연·토큰을 Micrometer 미터로 기록:
+  - `kyuloud.ai.chat.latency`(Timer) — 호출 지연, 태그 `model`.
+  - `kyuloud.ai.chat.tokens`(DistributionSummary) — 토큰 수, 태그 `model`·`type=prompt|completion|total`.
+- **의존성**: `micrometer-registry-prometheus`(runtimeOnly, Boot BOM 관리). actuator 노출 `health,info,metrics,prometheus`.
+- `ChatClientConfig` — 주 `chatClient`·`plannerChatClient` `defaultAdvisors` 에 `MetricsAdvisor` 등록.
+- **완료 기준**: `/actuator/metrics/kyuloud.ai.chat.latency`·`.../tokens` 와 `/actuator/prometheus` 에 메트릭 노출. **검증 진행**: `compileJava`/의존성 해석 ✅, 실호출 메트릭 확인 ⬜.
 
 #### Phase 4c — 가드레일 Advisor ⬜
 - 입력 PII/금칙어 필터 Advisor(요청 차단/마스킹) + 출력 후처리. 차단 시 표준 에러 응답(`ApiResponse`).
