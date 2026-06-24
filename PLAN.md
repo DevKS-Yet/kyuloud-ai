@@ -378,16 +378,29 @@ spring:
 - `ChatClientConfig` — 양쪽 ChatClient `defaultAdvisors` 최상단에 등록.
 - **완료 기준**: 금칙어 요청 → 400 차단, PII 포함 요청 → 마스킹되어 처리. **검증 진행**: `compileJava` ✅, 실호출 차단/마스킹 확인 ⬜.
 
-#### Phase 4d — 대화 메모리 JDBC 영속화 🚧 코드 구현 완료 · 검증 대기
+#### Phase 4d — 대화 메모리 JDBC 영속화 ✅ 완료
 - **의존성**: `spring-ai-starter-model-chat-memory-repository-jdbc`(BOM 2.0.0). 기존 pgvector용 PostgreSQL `DataSource` 를 재사용.
 - `ChatMemoryConfig` — `new InMemoryChatMemoryRepository()` → 자동 구성된 `ChatMemoryRepository`(=`JdbcChatMemoryRepository`) 주입. `MessageWindowChatMemory`(max 20) 윈도우는 유지.
 - **스키마**: `spring.ai.chat.memory.repository.jdbc.initialize-schema: always`(PostgreSQL 비임베디드라 always 필요, `SPRING_AI_CHAT_MEMORY` 테이블 자동 생성, 스크립트에 `IF NOT EXISTS` 포함이라 재기동 안전).
 - **효과**: 재기동해도 `conversationId` 별 대화 맥락이 유지된다. Planner 임시 `planCid` 도 동일 저장소를 쓰되 실행 후 `ChatMemory.clear` 로 정리(누수 없음).
 - **⚠️ conversationId 36자 제약**: `SPRING_AI_CHAT_MEMORY.conversation_id` 컬럼이 `VARCHAR(36)`(UUID 전제)이다. 36자를 넘는 conversationId 는 적재 시 `value too long for type character varying(36)` 오류가 난다. 따라서 ① Planner 임시 ID(`planCid`)는 접두사 없이 36자 UUID 만 사용, ② `ChatRequest.conversationId` 에 `@Size(max = 36)` 검증을 둬 긴 ID 는 DB 오류(500) 대신 400 으로 차단한다.
-- **완료 기준**: 앱 재기동 후 동일 `conversationId` 로 이전 대화를 기억. **검증 진행**: `compileJava`/의존성 해석 ✅, 부팅·재기동 후 기억 유지 확인 ⬜.
+- **완료 기준**: 앱 재기동 후 동일 `conversationId` 로 이전 대화를 기억. **검증 완료** ✅: `compileJava`/의존성 해석 + 재기동 후 기억 유지(`/agent/chat`·`/agent/chat/plan` 둘 다, 36자 제약·plan 맥락 시드 수정 포함) 확인.
 
-#### Phase 4e — 테스트 ⬜
+#### Phase 4e — 테스트 ⬜ (보류)
 - 단위 테스트(도구·Planner·Advisor 로직) + `@SpringBootTest` 통합(모킹된 ChatModel/VectorStore) + RAG 정확도 평가 시나리오. 환경 독립적 회귀 안전망 확보.
+- **보류 사유**: 대상 코드(도구/Planner/Advisor 등)를 먼저 수정할 계획이라, 테스트 작성은 그 이후로 미룸.
+
+### Phase 5 — 평가 기반 에이전트 루프(Reflective Agent)
+> **동기**: 기존 `planAndExecute`(3d-4)는 계획→실행→합성의 정적 파이프라인이라 **품질 게이트가 없다**(근거가 빈약해도 그대로 답함). 행동마다 충분성을 평가해 부족하면 추가 검색/다른 도구로 보완하는 Evaluator-Optimizer(Reflection) 루프를 도입한다.
+
+#### Phase 5a — 평가 루프 🚧 코드 구현 완료 · 검증 대기
+- **흐름**: 질문 파악·계획(`PlannerService`) → (행동 실행 → 평가 → 부족 시 추가/다른 행동)* → 최종 합성(`PlannerService.synthesize`).
+- **평가자**: `agent/eval/EvaluatorService` — 도구·메모리 없는 보조 ChatClient(`plannerChatClient` 재사용)로 누적 근거의 충분성을 구조화 출력 `EvaluationVerdict{sufficient, missing, nextAction}` 으로 판정. 평가 실패 시 "충분" 폴백(무한루프 방지). 프롬프트 `system-evaluator.st`.
+- **루프 제어**(`AgentService.loop`): 다음 행동은 남은 계획 단계 우선 → 소진 시 평가자 `nextAction`, 둘 다 없으면 조기 종료. 상한 `kyuloud.agent.loop.max-iterations`(기본 3). `missing` 은 다음 행동 프롬프트에 보완 지시로 전달.
+- **대화 맥락**: plan 과 동일(임시 `loopCid` 에 실제 기록 시드 → 종료 시 중간 잡음 폐기 → 사용자 대화엔 원 질문→최종 답변 한 턴만 기록). seed/record 헬퍼는 plan/loop 공유.
+- **API**: `POST /api/agent/loop` → `LoopResponse`(계획·회차별 행동/평가 기록·최종 답변·`toolsUsed`).
+- **트레이드오프**: 평가마다 LLM 호출 추가(지연·비용↑), 자기평가 품질은 모델 의존(필요 시 평가용 모델 분리 검토).
+- **완료 기준**: 빈약한 근거면 추가 검색을 거쳐 답하고, 충분하면 조기 종료. **검증 진행**: `compileJava` ✅, 실호출(평가→추가검색→답변) 확인 ⬜.
 
 ---
 
@@ -403,6 +416,7 @@ spring:
 | 3 | POST | `/api/agent/chat` | Agent(도구+RAG+메모리) 채팅 |
 | 3 | POST | `/api/agent/chat/stream` | Agent 스트리밍 채팅 (SSE, 3d-1) |
 | 3 | POST | `/api/agent/plan` | Agent Plan-and-Execute (계획→실행→합성, 3d-4) |
+| 5 | POST | `/api/agent/loop` | Agent 평가 루프 (행동→평가→추가행동→답변, 5a) |
 
 공통: 요청에 `conversationId`(세션 식별자)를 포함해 메모리/맥락을 관리한다.
 

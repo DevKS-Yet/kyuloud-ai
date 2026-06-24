@@ -62,6 +62,10 @@ kyuloud:
   search:
     searxng-url: http://localhost:8888
     max-results: 5
+  # Phase 5 — 평가 기반 에이전트 루프(행동→평가 반복 상한)
+  agent:
+    loop:
+      max-iterations: 3
 
 logging:
   level:

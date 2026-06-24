@@ -1,6 +1,7 @@
 package com.kyuloud.ai.agent.controller;
 
 import com.kyuloud.ai.agent.dto.AgentResponse;
+import com.kyuloud.ai.agent.dto.LoopResponse;
 import com.kyuloud.ai.agent.dto.PlanResponse;
 import com.kyuloud.ai.agent.service.AgentService;
 import com.kyuloud.ai.chat.dto.ChatRequest;
@@ -45,6 +46,16 @@ public class AgentController {
     @PostMapping("/plan")
     public ApiResponse<PlanResponse> plan(@Valid @RequestBody ChatRequest request) {
         PlanResponse response = agentService.planAndExecute(request.conversationId(), request.message());
+        return ApiResponse.ok(response);
+    }
+
+    /**
+     * Phase 5 — 평가 기반 에이전트 루프. 질문 파악·계획 → (행동 → 평가 → 추가 행동)* → 답변 으로,
+     * 행동마다 충분성을 평가해 부족하면 추가 검색/다른 도구로 보완한 뒤 답한다. 계획·회차별 행동/평가 기록을 함께 반환.
+     */
+    @PostMapping("/loop")
+    public ApiResponse<LoopResponse> loop(@Valid @RequestBody ChatRequest request) {
+        LoopResponse response = agentService.loop(request.conversationId(), request.message());
         return ApiResponse.ok(response);
     }
 }
