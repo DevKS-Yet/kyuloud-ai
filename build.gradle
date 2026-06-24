@@ -26,6 +26,8 @@ dependencies {
     implementation 'org.springframework.ai:spring-ai-starter-model-ollama'
     implementation 'org.springframework.ai:spring-ai-vector-store'
     implementation 'org.springframework.ai:spring-ai-vector-store-advisor'
+    // Spring AI 2.0 — modular RAG(RetrievalAugmentationAdvisor 등)는 spring-ai-rag 로 분리됨
+    implementation 'org.springframework.ai:spring-ai-rag'
     // Phase 2b — pgvector 영속 벡터 저장소 + 문서 메타데이터 RDB + 파일 적재(Tika)
     implementation 'org.springframework.ai:spring-ai-starter-vector-store-pgvector'
     implementation 'org.springframework.ai:spring-ai-tika-document-reader'
