@@ -3,6 +3,9 @@ spring:
     name: kyuloud-ai
   profiles:
     active: local
+  threads:
+    virtual:
+      enabled: true
 
 server:
   port: 8080
@@ -15,3 +18,11 @@ management:
   endpoint:
     health:
       show-details: always
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
