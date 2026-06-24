@@ -329,9 +329,13 @@ spring:
 - **`ToolCallTracker` 보강**: `@RequestScope` → ThreadLocal 싱글톤으로 전환. 스트리밍 시 도구 실행이 reactor 스레드(요청 스레드 밖)에서 일어나도 `record()` 가 예외 없이 graceful degrade. blocking 경로는 동일 스레드라 추적 정확(응답 후 `reset()` 으로 누수 방지). 스트리밍 응답엔 `toolsUsed` 미포함.
 - **완료 기준**: Agent가 도구를 호출하면서도 응답을 SSE로 스트리밍. **검증 진행**: `compileJava` ✅, 실호출 검증 ⬜.
 
-##### Phase 3d-2 — WebSearchTool ⬜ (외부 검색 API)
-- `tool/WebSearchTool` — 외부 검색 API(키 필요) 연동 `@Tool`. `ToolCallTracker` 기록 포함.
-- **사전 준비**: 검색 제공자 선정 + API 키. **완료 기준**: 최신 정보 질의 시 Agent가 웹 검색 도구를 호출해 답변.
+##### Phase 3d-2 — WebSearchTool 🚧 코드 구현 완료 · 검증 대기
+- **방식**: SearXNG 자체 호스팅(API 키·요금 없음, 로컬 완결). `docker-compose.yml`에 `searxng/searxng:latest` 추가(포트 8888), `searxng/settings.yml`로 JSON 응답·엔진 구성.
+- `tool/WebSearchTool` — `RestClient`로 SearXNG `/search?format=json` 호출 → 제목·URL·요약을 번호 매긴 문자열로 반환. SearXNG 미기동 시 예외 대신 안내 메시지 반환(graceful degrade).
+- `config/SearchProperties` — `kyuloud.search.searxng-url`·`max-results` 외부화.
+- `AgentService`에 `WebSearchTool` 추가(`.tools(..., webSearchTool)`). `system-agent.st`에 웹 검색 규칙 추가.
+- **사전 준비**: `docker compose up -d`(SearXNG 기동). **완료 기준**: 최신 정보 질의 시 Agent가 `searchWeb` 도구를 호출해 답변, `toolsUsed`에 `"searchWeb"` 기록.
+- **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜.
 
 ##### Phase 3d-3 — MCP Client ⬜ (외부 표준 도구)
 - `spring-ai-starter-mcp-client` 의존성 추가, 외부 MCP 서버료 연동으로 표준 도구 확장.

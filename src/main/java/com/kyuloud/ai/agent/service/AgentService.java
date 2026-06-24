@@ -4,6 +4,7 @@ import com.kyuloud.ai.agent.dto.AgentResponse;
 import com.kyuloud.ai.agent.tool.DateTimeTool;
 import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
 import com.kyuloud.ai.agent.tool.RagSearchTool;
+import com.kyuloud.ai.agent.tool.WebSearchTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -30,6 +31,7 @@ public class AgentService {
     private final DateTimeTool dateTimeTool;
     private final RagSearchTool ragSearchTool;
     private final DocumentCatalogTool documentCatalogTool;
+    private final WebSearchTool webSearchTool;
     private final ToolCallTracker toolCallTracker;
 
     @Value("classpath:prompts/system-agent.st")
@@ -39,11 +41,13 @@ public class AgentService {
                         DateTimeTool dateTimeTool,
                         RagSearchTool ragSearchTool,
                         DocumentCatalogTool documentCatalogTool,
+                        WebSearchTool webSearchTool,
                         ToolCallTracker toolCallTracker) {
         this.chatClient = chatClient;
         this.dateTimeTool = dateTimeTool;
         this.ragSearchTool = ragSearchTool;
         this.documentCatalogTool = documentCatalogTool;
+        this.webSearchTool = webSearchTool;
         this.toolCallTracker = toolCallTracker;
     }
 
@@ -55,7 +59,7 @@ public class AgentService {
             String reply = chatClient.prompt()
                     .system(agentSystemPrompt)
                     .user(message)
-                    .tools(dateTimeTool, ragSearchTool, documentCatalogTool)
+                    .tools(dateTimeTool, ragSearchTool, documentCatalogTool, webSearchTool)
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid))
                     .call()
                     .content();
@@ -83,7 +87,7 @@ public class AgentService {
         return chatClient.prompt()
                 .system(agentSystemPrompt)
                 .user(message)
-                .tools(dateTimeTool, ragSearchTool, documentCatalogTool)
+                .tools(dateTimeTool, ragSearchTool, documentCatalogTool, webSearchTool)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid))
                 .stream()
                 .content();

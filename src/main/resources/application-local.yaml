@@ -37,6 +37,9 @@ kyuloud:
   rag:
     top-k: 4
     similarity-threshold: 0.5
+  search:
+    searxng-url: http://localhost:8888
+    max-results: 5
 
 logging:
   level:

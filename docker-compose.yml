@@ -1,6 +1,19 @@
-# Phase 2b — 로컬 RAG 인프라 (pgvector 확장이 포함된 PostgreSQL)
+# 로컬 AI 인프라
+# Phase 2b — pgvector (RAG 벡터 저장소)
+# Phase 3d-2 — SearXNG (로컬 웹 검색, API 키 불필요)
 # 기동: docker compose up -d
 services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: kyuloud-searxng
+    ports:
+      - "8888:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: kyuloud-postgres

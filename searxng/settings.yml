@@ -1,0 +1,24 @@
+# SearXNG 최소 설정 — Phase 3d-2 WebSearchTool 용
+# JSON 형식 응답을 허용하고 주요 검색 엔진을 활성화한다.
+
+use_default_settings: true
+
+server:
+  secret_key: "kyuloud-searxng-secret"
+  limiter: false      # 로컬 단독 사용이므로 rate limit 비활성화
+
+search:
+  formats:
+    - html
+    - json           # WebSearchTool 이 /search?format=json 으로 호출
+
+engines:
+  - name: google
+    engine: google
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    disabled: false
+  - name: bing
+    engine: bing
+    disabled: false
