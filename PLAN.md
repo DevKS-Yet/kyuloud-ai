@@ -410,6 +410,68 @@ spring:
 - **API**: `POST /api/agent/clarify` → `ClarifyResponse{request, needsClarification, questions[]}`. (독립 엔드포인트; 추후 chat/loop 선행 게이트로 흡수 가능)
 - **완료 기준**: 모호한 질문 → 선택지 포함 되묻기 / 충분한 질문 → needsClarification=false. **검증 진행**: `compileJava` ✅, 실호출 확인 ⬜.
 
+### Phase 6 — 통합 에이전트 (Workflow-scaffolded, 클린 재구현)
+> **배경/설계 판단**: Anthropic "Building Effective Agents" 의 Routing · Orchestrator-workers · Evaluator-optimizer 를 통합한다. 설계를 가르는 핵심 축은 **모델 능력**이다 — *Agent-centric*(LLM 이 메타도구로 스스로 escalate/되묻기 판단; 강한 모델에 적합)은 로컬 4B급(`gemma4:e4b`)에선 판단 타이밍이 불안정해 깨지기 쉽다. 따라서 **Workflow-scaffolded** 로 간다: 각 단계가 결정적 코드 경로이고 약한 모델은 한 번에 좁은 판단 하나만 한다(구조화 출력 성공률↑, 예측·일관성↑).
+>
+> **Phase 3d-4(plan)·5(loop/clarify)는 "경험"으로 본다.** 누적된 구현(분산 엔드포인트, 메모리 seed/clear 트릭, ThreadLocal tracker, 보조 ChatClient 한 빈 재사용, RAG 이중 노출)을 재활용하지 않고, 교훈만 반영해 **단일 진입점으로 클린 재구현**한다. 기존 `/api/agent/*`·`/api/rag/chat` 은 deprecated 로 유지(검증/비교용), 신규는 **`POST /api/agent`** 하나.
+>
+> **흐름**:
+> ```
+> query → Router(분류) ─┬─ CLARIFY  → 되묻는 질문+선택지 반환(REST 왕복)
+>                       ├─ DIRECT   → 단발 답변(+필요 시 RAG 검색)
+>                       └─ RESEARCH → Orchestrator(동적 분해) → workers 병렬
+>                                       → Evaluator-optimizer(부족 시 보강) → synthesize
+> ```
+> **마이그레이션 경로**: B 로 짜두면 추후 capable 모델 전환 시 Router 를 빼고 orchestrator/clarify 를 도구로 노출하면 Agent-centric(A)로 자연 수렴한다(= A 의 디리스크드 버전).
+
+**클린 재구현 설계 원칙 (현재 누적 구현 대비)**
+- **단일 진입점** `POST /api/agent` + 내부 Router 분기. (chat/plan/loop/clarify 4개 분산 → 1개)
+- **`AgentContext` 명시적 주입**: `conversationId` · `evidence`(워커 중간결과) · `budget`(총 LLM/도구 호출·타임아웃) · `tracer` 를 코드가 들고 다닌다. → **메모리 seed/clear 트릭 폐기**: 중간 잡음을 임시 conversationId 로 DB 에 썼다 지우지 않고, `evidence` 리스트로 코드가 보유. 사용자 메모리엔 최종 한 턴만 기록.
+- **수집형 tracer**: `ToolCallTracker` ThreadLocal(스트리밍/병렬에서 깨짐) → context 로 전달되는 수집형 tracer 로 교체(병렬·스트리밍 안전).
+- **역할별 보조 클라이언트 의미 분리**: `routerClient`/`workerClient`/`evaluatorClient`(같은 모델이라도 역할·프롬프트 분리; `plannerChatClient` 단일 재사용의 의미 혼란 제거).
+- **RAG 단일화**: advisor(`/rag/chat`) + tool(`RagSearchTool`) 이중 노출 → 워크플로에선 retriever 를 orchestrator/DIRECT 가 **직접 호출**(도구 노출 불필요)로 통일. **검색 시점 결정(#1=c)**: DIRECT 는 "검색이 필요한가"를 LLM 으로 판단하지 않고 **항상 저비용으로 1회 검색**하되 `similarityThreshold` 로 무관 결과를 걸러 빈 결과면 컨텍스트 주입을 생략한다(결정적·단순; "몇시야" 류는 threshold 에서 자연히 탈락).
+- **전역 budget/정지조건**: 총 LLM 호출·도구 호출·타임아웃 상한을 `AgentContext` 가 강제(무한루프·비용 폭주 방지).
+- **conversationId 규약**: 처음부터 UUID(≤36) 규약. 임시 작업 컨텍스트는 메모리(DB) 밖에서 처리해 `VARCHAR(36)`/잡음 적재 문제를 원천 차단.
+
+**패턴 매핑**: Routing=진입 분류기(DIRECT/RESEARCH/CLARIFY, 약한 모델이 전략 하나만 선택) · Orchestrator-workers=RESEARCH 경로(동적 분해→가상스레드 병렬 워커→수집) · Evaluator-optimizer=orchestrator 결과를 감싸는 품질 루프(워커별이 아닌 **묶음 1회** 평가로 비용 절감).
+
+**확정 결정 (PLAN 검토 반영)**
+1. **DIRECT-RAG (#1=c)**: 위 RAG 단일화 참조 — 항상 저비용 검색 + threshold 필터(빈 결과면 미주입).
+2. **Router 이중부담 (#2)**: Router 는 단일 LLM 호출 유지. 프롬프트에 "핵심 정보 부족으로 전략 선택 불가 시 CLARIFY" 가드 한 줄 + enum/예시를 타이트하게. 분류 robustness 는 6a 에서 실측. 오분류 폴백은 DIRECT(저비용·안전).
+3. **tracer 메커니즘 (#3)**: Spring AI **`ToolContext`** 채택 — `.toolContext(Map)` 로 요청별 수집기를 넘기고 `@Tool` 메서드가 `ToolContext` 파라미터로 받아 기록. 병렬 워커는 각 호출이 자기 context map 을 가져 격리. **6a 에서 이 메커니즘을 먼저 PoC 검증**(6d 병렬의 선행 조건).
+4. **budget 초과 동작 (#4)**: 상한 초과 시 에러가 아니라 **지금까지의 `evidence` 로 best-effort 합성 + 경고 로그**(부분 답변).
+5. **CLARIFY 연속성 (#5)**: 통합 흐름에서 CLARIFY 로 분기하면 그 턴(원 질문 + 되묻기)을 **메모리에 기록**해, 사용자가 같은 `conversationId` 로 재호출할 때 맥락이 이어지게 한다(5b 독립 버전의 읽기전용과 다름).
+6. **cross-cutting advisor (#6)**: 신규 `routerClient`/`workerClient`/`evaluatorClient` 에 Phase 4 의 **Guardrail·Logging·Metrics advisor 를 모두 적용**. 특히 Guardrail(입력 차단/PII)은 진입 클라이언트(router)에 필수.
+7. **스트리밍 (#7)**: `/api/agent` 는 우선 **blocking** 으로 구현. 최종 synthesis 스트리밍은 추후(멀티스텝 중간은 비스트리밍).
+8. **테스트 (#8)**: Phase 6 는 멀티스텝이라 회귀 위험이 커, 최소 **Router 분류 + orchestrator 분해**는 단위테스트를 함께 작성(보류 중인 4e 와 연결).
+
+#### Phase 6a — 골격: 단일 엔드포인트 + Router + DIRECT ⬜
+- `POST /api/agent` 신설. `RouterService`(구조화 출력 전략 enum, 오분류 폴백 DIRECT) + `AgentContext`(conversationId·budget·수집형 tracer) 기반 골격. 신규 클라이언트에 Guardrail/Logging/Metrics advisor 적용(#6).
+- **DIRECT 경로만** 연결: 항상 저비용 RAG 1회 검색 + threshold 필터(#1=c) → 단발 답변. Router 가 RESEARCH/CLARIFY 로 분류해도 일단 DIRECT 로 폴백.
+- **`ToolContext` tracer PoC(#3)**: `.toolContext(Map)` 로 요청별 수집기를 도구에 전달해 도구 호출이 기록되는지 검증(6d 병렬의 선행 조건).
+- **완료 기준**: 단순 질문이 Router→DIRECT 로 흘러 답변. budget/정지조건·tracer(ToolContext) 동작, Guardrail 입력 차단 동작.
+
+#### Phase 6b — CLARIFY 분기 ⬜
+- Router 가 `CLARIFY` 로 분류 시(핵심 정보 부족으로 전략 선택 불가) 되묻는 질문+선택지 생성 → 응답(REST 왕복). 대화 맥락 반영해 이미 아는 정보는 안 물음.
+- **연속성(#5)**: CLARIFY 턴(원 질문 + 되묻기)을 메모리에 기록해, 사용자가 같은 `conversationId` 로 재호출하면 맥락이 이어진다.
+- **완료 기준**: 모호한 질문 → 되묻기 후 재호출 시 맥락 유지, 명확한 질문 → 해당 전략으로 진행.
+
+#### Phase 6c — RESEARCH: Orchestrator-workers (순차) ⬜
+- `OrchestratorService` — 중앙 LLM 이 질문을 워커 하위작업으로 **동적 분해** → 각 워커(리서처 페르소나, 도구 사용, 근거만 보고)를 **순차** 실행 → `AgentContext.evidence` 누적 → `synthesize`.
+- **완료 기준**: 다단계 질문이 RESEARCH 로 분기해 여러 워커 근거를 종합 답변.
+
+#### Phase 6d — 워커 병렬화 ⬜
+- 독립 하위작업을 가상스레드(`spring.threads.virtual.enabled=true`)로 **병렬** 실행. 수집형 tracer 로 병렬 도구추적 안전성 확보. 의존 관계 있는 작업은 순차 유지.
+- **완료 기준**: 독립 워커 병렬 실행으로 지연 단축, 도구추적 정확.
+
+#### Phase 6e — Evaluator-optimizer 통합 ⬜
+- orchestrator 결과를 충분성 평가로 감싸 부족하면(missing) 워커를 추가 투입(보강 루프). budget 상한 내에서 반복.
+- **완료 기준**: 빈약한 근거면 보강 후 답하고, 충분하면 조기 종료.
+
+#### Phase 6f — 정리/통일 ⬜
+- 기존 `/api/agent/chat|plan|loop|clarify`·`/api/rag/chat` deprecated 표기, RAG 단일화 마무리, 문서/Swagger 정리. (구 엔드포인트 제거는 신규 검증 후 별도 결정)
+- **완료 기준**: `/api/agent` 단일 진입점으로 전 흐름 동작, 중복 경로 정리.
+
 ---
 
 ## 6. API 엔드포인트 요약 (목표)
@@ -424,10 +486,13 @@ spring:
 | 3 | POST | `/api/agent/chat` | Agent(도구+RAG+메모리) 채팅 |
 | 3 | POST | `/api/agent/chat/stream` | Agent 스트리밍 채팅 (SSE, 3d-1) |
 | 3 | POST | `/api/agent/plan` | Agent Plan-and-Execute (계획→실행→합성, 3d-4) |
-| 5 | POST | `/api/agent/loop` | Agent 평가 루프 (행동→평가→추가행동→답변, 5a) |
-| 5 | POST | `/api/agent/clarify` | 명확화 — 답변 전 사용자에게 되물을 정보 판단 (5b) |
+| 5 | POST | `/api/agent/loop` | Agent 평가 루프 (행동→평가→추가행동→답변, 5a) *(Phase 6에서 통합 예정)* |
+| 5 | POST | `/api/agent/clarify` | 명확화 — 답변 전 사용자에게 되물을 정보 판단 (5b) *(Phase 6에서 통합 예정)* |
+| 6 | POST | `/api/agent` | **통합 에이전트** — Router→(CLARIFY/DIRECT/RESEARCH)→답변 (Phase 6) |
 
 공통: 요청에 `conversationId`(세션 식별자)를 포함해 메모리/맥락을 관리한다.
+
+> **Phase 6 통합 후**: `/api/agent` 단일 진입점이 권장 경로가 되고, 위 `/api/agent/chat|plan|loop|clarify`·`/api/rag/chat` 은 deprecated(검증·비교용으로 유지, 제거는 별도 결정).
 
 ---
 
@@ -437,7 +502,9 @@ spring:
 - [x] **M1** Simple Chat (스트리밍 + 멀티턴 메모리 + 프롬프트 외부화) (✅ Phase 1)
 - [x] **M2** RAG (문서 적재 + 검색 + 출처 응답) (✅ Phase 2a~2b 검증 완료)
 - [x] **M3** Agent (tool-calling + RAG tool + ReAct 루프) (✅ Phase 3a~3c, 통합테스트 정상)
-- [ ] **M4** 운영 강화 (가드레일/관측/영속화/테스트)
+- [ ] **M4** 운영 강화 (가드레일/관측/영속화/테스트) — 4a~4d ✅(가드레일/관측/메트릭/영속화), 4e(테스트) 보류
+- [ ] **M5** 통합 에이전트 (Router + Orchestrator-workers + Evaluator-optimizer, 단일 `/api/agent`) — Phase 6
+  - 참고: Phase 3d-4(plan)·5(loop/clarify)는 "경험"으로 보고 Phase 6 에서 클린 재구현(구 엔드포인트는 deprecated).
 
 ---
 
