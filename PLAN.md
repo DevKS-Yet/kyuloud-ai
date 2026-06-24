@@ -345,9 +345,12 @@ spring:
 - **완료 기준**: "현재 프로젝트 파일 목록 보여줘" 등 IntelliJ 도구를 Agent가 호출해 IDE 정보 기반 답변.
 - **검증 진행**: `compileJava` (경고 없음) ✅. 실호출 검증 ⬜ (IntelliJ MCP Server 활성화 필요).
 
-##### Phase 3d-4 — Planner ⬜ (선택, 아키텍처 확장)
-- 복잡한 multi-step 작업의 명시적 계획 수립 단계(`PlannerService`) 분리. 실제 필요성이 확인된 뒤 착수.
-- **완료 기준**: 다단계 작업을 계획→실행으로 분리 수행.
+##### Phase 3d-4 — Planner 🚧 코드 구현 완료 · 검증 대기 (선택, 아키텍처 확장)
+- **방식**: Plan-and-Execute. 복잡한 multi-step 요청을 `PlannerService` 가 순서가 있는 단계(`Plan`/`PlanStep`)로 분해(구조화 출력) → `AgentService.planAndExecute` 가 각 단계를 도구 탑재 `chatClient` 로 순차 실행 → `PlannerService.synthesize` 로 결과 합성.
+- **격리**: 단계 실행은 사용자 대화(`cid`)와 분리된 임시 `planCid` 메모리에서 수행(앞 단계 결과를 메모리로 공유). 실행 종료 시 `ChatMemory.clear(planCid)` 로 정리해 사용자 대화 오염·메모리 누수 방지. 단일 단계면 합성 LLM 호출 생략.
+- **전용 ChatClient**: 계획·합성은 도구·메모리 없는 `plannerChatClient` 빈으로 수행(주 `chatClient` 는 `@Primary`). 프롬프트는 `system-planner.st`·`system-synthesis.st` 로 외부화.
+- **API**: `POST /api/agent/plan` → `PlanResponse`(계획·단계별 결과·최종 답변·`toolsUsed`).
+- **완료 기준**: 다단계 작업을 계획→실행→합성으로 분리 수행. **검증 진행**: `compileJava` ✅, 실호출 검증 ⬜.
 
 ### Phase 4 — 운영·품질 강화 (지속)
 - 가드레일 Advisor(PII/금칙어), 요청·응답 로깅/추적(observability).
@@ -368,6 +371,7 @@ spring:
 | 2 | POST | `/api/rag/chat` | RAG 기반 질의 |
 | 3 | POST | `/api/agent/chat` | Agent(도구+RAG+메모리) 채팅 |
 | 3 | POST | `/api/agent/chat/stream` | Agent 스트리밍 채팅 (SSE, 3d-1) |
+| 3 | POST | `/api/agent/plan` | Agent Plan-and-Execute (계획→실행→합성, 3d-4) |
 
 공통: 요청에 `conversationId`(세션 식별자)를 포함해 메모리/맥락을 관리한다.
 

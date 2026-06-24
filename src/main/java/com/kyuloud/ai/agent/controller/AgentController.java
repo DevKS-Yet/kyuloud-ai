@@ -1,6 +1,7 @@
 package com.kyuloud.ai.agent.controller;
 
 import com.kyuloud.ai.agent.dto.AgentResponse;
+import com.kyuloud.ai.agent.dto.PlanResponse;
 import com.kyuloud.ai.agent.service.AgentService;
 import com.kyuloud.ai.chat.dto.ChatRequest;
 import com.kyuloud.ai.common.dto.ApiResponse;
@@ -35,5 +36,15 @@ public class AgentController {
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> stream(@Valid @RequestBody ChatRequest request) {
         return agentService.stream(request.conversationId(), request.message());
+    }
+
+    /**
+     * Phase 3d-4 — Plan-and-Execute. 복잡한 multi-step 요청을 계획→단계별 실행→합성으로 분리 수행하고,
+     * 계획·단계별 결과·최종 답변을 함께 반환한다.
+     */
+    @PostMapping("/plan")
+    public ApiResponse<PlanResponse> plan(@Valid @RequestBody ChatRequest request) {
+        PlanResponse response = agentService.planAndExecute(request.conversationId(), request.message());
+        return ApiResponse.ok(response);
     }
 }

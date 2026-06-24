@@ -1,6 +1,11 @@
 package com.kyuloud.ai.agent.service;
 
 import com.kyuloud.ai.agent.dto.AgentResponse;
+import com.kyuloud.ai.agent.dto.PlanResponse;
+import com.kyuloud.ai.agent.dto.PlanStep;
+import com.kyuloud.ai.agent.dto.StepResult;
+import com.kyuloud.ai.agent.planner.Plan;
+import com.kyuloud.ai.agent.planner.PlannerService;
 import com.kyuloud.ai.agent.tool.DateTimeTool;
 import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
 import com.kyuloud.ai.agent.tool.RagSearchTool;
@@ -16,6 +21,10 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 /**
  * Phase 3a — Agent 채팅 서비스.
@@ -40,6 +49,8 @@ public class AgentService {
     private final DocumentCatalogTool documentCatalogTool;
     private final WebSearchTool webSearchTool;
     private final ToolCallTracker toolCallTracker;
+    private final PlannerService plannerService;
+    private final ChatMemory chatMemory;
 
     /**
      * MCP 도구 공급자(optional). 생성자에서 즉시 해석하지 않고 {@link ObjectProvider} 로 보관해,
@@ -60,6 +71,8 @@ public class AgentService {
                         DocumentCatalogTool documentCatalogTool,
                         WebSearchTool webSearchTool,
                         ToolCallTracker toolCallTracker,
+                        PlannerService plannerService,
+                        ChatMemory chatMemory,
                         ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider) {
         this.chatClient = chatClient;
         this.dateTimeTool = dateTimeTool;
@@ -67,6 +80,8 @@ public class AgentService {
         this.documentCatalogTool = documentCatalogTool;
         this.webSearchTool = webSearchTool;
         this.toolCallTracker = toolCallTracker;
+        this.plannerService = plannerService;
+        this.chatMemory = chatMemory;
         this.mcpProvider = mcpProvider;
     }
 
@@ -99,21 +114,10 @@ public class AgentService {
 
     public AgentResponse chat(String conversationId, String message) {
         String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
-        ToolCallback[] mcp = mcpToolCallbacks();
-        log.debug("agent chat: cid={}, message={}, mcpTools={}", cid, message, mcp.length);
+        log.debug("agent chat: cid={}, message={}", cid, message);
 
         try {
-            var spec = chatClient.prompt()
-                    .system(agentSystemPrompt)
-                    .user(message)
-                    .tools(dateTimeTool, ragSearchTool, documentCatalogTool, webSearchTool)
-                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid));
-
-            if (mcp.length > 0) {
-                spec = spec.tools((Object[]) mcp);
-            }
-
-            String reply = spec.call().content();
+            String reply = agentSpec(cid, message).call().content();
             return new AgentResponse(reply, toolCallTracker.getCalledTools());
         } finally {
             toolCallTracker.reset();
@@ -127,19 +131,73 @@ public class AgentService {
      */
     public Flux<String> stream(String conversationId, String message) {
         String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
-        ToolCallback[] mcp = mcpToolCallbacks();
-        log.debug("agent stream: cid={}, message={}, mcpTools={}", cid, message, mcp.length);
+        log.debug("agent stream: cid={}, message={}", cid, message);
+        return agentSpec(cid, message).stream().content();
+    }
 
+    /**
+     * Phase 3d-4 — Plan-and-Execute.
+     *
+     * <p>복잡한 multi-step 요청을 {@link PlannerService} 로 <em>계획</em>(순서가 있는 단계)으로 분해한 뒤,
+     * 각 단계를 도구 탑재 에이전트로 <em>순차 실행</em>하고, 마지막에 결과를 <em>합성</em>해 최종 답변을 만든다.
+     * 단발 {@link #chat} 의 자동 ReAct 루프와 달리 계획·실행을 명시적으로 분리해 다단계 작업을 다룬다.
+     *
+     * <p>단계 실행은 사용자 대화({@code cid})와 분리된 임시 {@code planCid} 컨텍스트에서 수행한다.
+     * 한 plan 안의 단계들은 이 임시 메모리를 통해 앞 단계 결과를 공유하고, 실행이 끝나면
+     * {@link ChatMemory#clear} 로 정리해 사용자 대화 오염과 메모리 누수를 막는다.
+     */
+    public PlanResponse planAndExecute(String conversationId, String message) {
+        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String planCid = "plan-" + cid + "-" + UUID.randomUUID();
+        log.debug("agent plan-and-execute: cid={}, planCid={}, message={}", cid, planCid, message);
+
+        try {
+            Plan plan = plannerService.plan(message);
+            List<StepResult> stepResults = new ArrayList<>();
+
+            for (PlanStep step : plan.steps()) {
+                String stepReply = agentSpec(planCid, buildStepPrompt(message, step)).call().content();
+                stepResults.add(new StepResult(step.order(), step.description(), stepReply));
+            }
+
+            // 단일 단계면 합성용 LLM 호출을 생략(불필요한 비용 방지)하고 그 단계 결과를 그대로 최종 답변으로 쓴다.
+            String finalReply = stepResults.size() == 1
+                    ? stepResults.get(0).result()
+                    : plannerService.synthesize(message, stepResults);
+
+            return new PlanResponse(message, plan.steps(), stepResults, finalReply,
+                    toolCallTracker.getCalledTools());
+        } finally {
+            chatMemory.clear(planCid);
+            toolCallTracker.reset();
+        }
+    }
+
+    /**
+     * 도구 + 메모리(conversationId) 를 결합한 에이전트 요청 스펙을 구성한다. blocking/스트리밍/단계 실행이 공유한다.
+     * MCP 도구는 연결이 있을 때만 추가된다.
+     */
+    private ChatClient.ChatClientRequestSpec agentSpec(String cid, String userMessage) {
+        ToolCallback[] mcp = mcpToolCallbacks();
         var spec = chatClient.prompt()
                 .system(agentSystemPrompt)
-                .user(message)
+                .user(userMessage)
                 .tools(dateTimeTool, ragSearchTool, documentCatalogTool, webSearchTool)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid));
-
         if (mcp.length > 0) {
             spec = spec.tools((Object[]) mcp);
         }
+        return spec;
+    }
 
-        return spec.stream().content();
+    /**
+     * 단계 실행용 프롬프트. 전체 요청 맥락과 "지금 수행할 단계"를 함께 주어 한 단계씩 처리하게 한다.
+     * 앞 단계 결과는 {@code planCid} 대화 메모리로 전달되므로 프롬프트에 중복 포함하지 않는다.
+     */
+    private String buildStepPrompt(String originalRequest, PlanStep step) {
+        return "전체 요청: " + originalRequest + "\n\n"
+                + "지금 수행할 단계(" + step.order() + "): " + step.description() + "\n"
+                + "이 단계만 수행하고 그 결과를 답하세요. 앞 단계의 결과는 대화 맥락에 있으니 참고하세요. "
+                + "필요하면 도구를 호출하세요.";
     }
 }

@@ -6,6 +6,7 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.io.Resource;
 
 /**
@@ -20,10 +21,23 @@ public class ChatClientConfig {
     private Resource systemPrompt;
 
     @Bean
+    @Primary
     public ChatClient chatClient(ChatClient.Builder builder, ChatMemory chatMemory) {
         return builder
                 .defaultSystem(systemPrompt)
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
                 .build();
+    }
+
+    /**
+     * Phase 3d-4 — Planner 전용 ChatClient.
+     *
+     * <p>계획 수립·결과 합성에만 쓰이므로 <em>도구·대화 메모리 advisor 없이</em> 구성한다(시스템 프롬프트는
+     * 호출 시점에 planner/synthesis 용으로 각각 지정). 메모리가 없어 사용자 대화 맥락을 오염시키지 않고,
+     * 도구가 없어 계획 단계에서 섣불리 도구를 호출하지 않는다(실제 도구 실행은 {@code chatClient} 가 담당).
+     */
+    @Bean
+    public ChatClient plannerChatClient(ChatClient.Builder builder) {
+        return builder.build();
     }
 }
