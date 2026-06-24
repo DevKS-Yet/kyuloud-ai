@@ -368,8 +368,15 @@ spring:
 - `ChatClientConfig` — 주 `chatClient`·`plannerChatClient` `defaultAdvisors` 에 `MetricsAdvisor` 등록.
 - **완료 기준**: `/actuator/metrics/kyuloud.ai.chat.latency`·`.../tokens` 와 `/actuator/prometheus` 에 메트릭 노출. **검증 진행**: `compileJava`/의존성 해석 ✅, 실호출 메트릭 확인 ⬜.
 
-#### Phase 4c — 가드레일 Advisor ⬜
-- 입력 PII/금칙어 필터 Advisor(요청 차단/마스킹) + 출력 후처리. 차단 시 표준 에러 응답(`ApiResponse`).
+#### Phase 4c — 가드레일 Advisor 🚧 코드 구현 완료 · 검증 대기
+- `common/advisor/GuardrailAdvisor` — `BaseAdvisor`, 가장 바깥(order = `DEFAULT_CHAT_MEMORY_PRECEDENCE_ORDER - 110`)에서 입력 검사:
+  - **차단**: 금칙어 포함 시 `GuardrailException`(→ 400 `GUARDRAIL_BLOCKED` 표준 에러) 으로 모델 호출 없이 차단.
+  - **마스킹**: 사용자 메시지의 PII 마스킹 후 진행(가장 바깥이라 마스킹된 값만 로그·메모리·모델로 전달).
+  - **출력 후처리(비파괴)**: 응답의 PII/금칙어를 경고 로깅만. 응답 재작성은 도구호출 중간응답 손상·스트리밍 경계분할 문제로 보류(탐지·관측에 집중).
+- `common/guardrail/PiiMasker` — 이메일·전화·주민번호·카드번호 정규식 마스킹/탐지(순수 로직, 4e 단위테스트 용이).
+- `common/exception/GuardrailException`(extends `BusinessException`), `config/GuardrailProperties`(`kyuloud.guardrail.{enabled,mask-pii,banned-words}`).
+- `ChatClientConfig` — 양쪽 ChatClient `defaultAdvisors` 최상단에 등록.
+- **완료 기준**: 금칙어 요청 → 400 차단, PII 포함 요청 → 마스킹되어 처리. **검증 진행**: `compileJava` ✅, 실호출 차단/마스킹 확인 ⬜.
 
 #### Phase 4d — 대화 메모리 JDBC 영속화 ⬜
 - InMemory `MessageWindowChatMemory` → JDBC 영속화(`spring-ai-starter-model-chat-memory-repository-jdbc` 등)로 전환. 세션 만료 정책.

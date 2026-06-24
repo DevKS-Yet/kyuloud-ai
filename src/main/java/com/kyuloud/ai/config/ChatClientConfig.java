@@ -1,5 +1,6 @@
 package com.kyuloud.ai.config;
 
+import com.kyuloud.ai.common.advisor.GuardrailAdvisor;
 import com.kyuloud.ai.common.advisor.LoggingAdvisor;
 import com.kyuloud.ai.common.advisor.MetricsAdvisor;
 import org.springframework.ai.chat.client.ChatClient;
@@ -27,10 +28,11 @@ public class ChatClientConfig {
     @Bean
     @Primary
     public ChatClient chatClient(ChatClient.Builder builder, ChatMemory chatMemory,
-                                 LoggingAdvisor loggingAdvisor, MetricsAdvisor metricsAdvisor) {
+                                 GuardrailAdvisor guardrailAdvisor, LoggingAdvisor loggingAdvisor,
+                                 MetricsAdvisor metricsAdvisor) {
         return builder
                 .defaultSystem(systemPrompt)
-                .defaultAdvisors(loggingAdvisor, metricsAdvisor,
+                .defaultAdvisors(guardrailAdvisor, loggingAdvisor, metricsAdvisor,
                         MessageChatMemoryAdvisor.builder(chatMemory).build())
                 .build();
     }
@@ -43,10 +45,10 @@ public class ChatClientConfig {
      * 도구가 없어 계획 단계에서 섣불리 도구를 호출하지 않는다(실제 도구 실행은 {@code chatClient} 가 담당).
      */
     @Bean
-    public ChatClient plannerChatClient(ChatClient.Builder builder, LoggingAdvisor loggingAdvisor,
-                                        MetricsAdvisor metricsAdvisor) {
+    public ChatClient plannerChatClient(ChatClient.Builder builder, GuardrailAdvisor guardrailAdvisor,
+                                        LoggingAdvisor loggingAdvisor, MetricsAdvisor metricsAdvisor) {
         return builder
-                .defaultAdvisors(loggingAdvisor, metricsAdvisor)
+                .defaultAdvisors(guardrailAdvisor, loggingAdvisor, metricsAdvisor)
                 .build();
     }
 }

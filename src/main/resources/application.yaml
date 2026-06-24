@@ -26,3 +26,11 @@ springdoc:
     tags-sorter: alpha
   api-docs:
     path: /v3/api-docs
+
+# Phase 4c — 가드레일(입력 금칙어 차단 + PII 마스킹)
+kyuloud:
+  guardrail:
+    enabled: true
+    mask-pii: true
+    banned-words:
+      - 금칙어테스트
