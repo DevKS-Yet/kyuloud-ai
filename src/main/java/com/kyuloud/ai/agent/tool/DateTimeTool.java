@@ -1,5 +1,6 @@
 package com.kyuloud.ai.agent.tool;
 
+import com.kyuloud.ai.agent.service.ToolCallTracker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
@@ -21,8 +22,15 @@ public class DateTimeTool {
     private static final DateTimeFormatter FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd(EEE) HH:mm:ss");
 
+    private final ToolCallTracker toolCallTracker;
+
+    public DateTimeTool(ToolCallTracker toolCallTracker) {
+        this.toolCallTracker = toolCallTracker;
+    }
+
     @Tool(description = "현재 날짜와 시각을 반환한다. 사용자가 오늘 날짜, 요일, 현재 시각을 물을 때 호출한다.")
     public String getCurrentDateTime() {
+        toolCallTracker.record("getCurrentDateTime");
         ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
         String result = now.format(FORMATTER) + " (" + now.getZone() + ")";
         log.debug("DateTimeTool 호출: {}", result);

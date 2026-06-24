@@ -1,5 +1,6 @@
 package com.kyuloud.ai.agent.tool;
 
+import com.kyuloud.ai.agent.service.ToolCallTracker;
 import com.kyuloud.ai.config.RagProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -27,16 +28,20 @@ public class RagSearchTool {
 
     private final VectorStore vectorStore;
     private final RagProperties ragProperties;
+    private final ToolCallTracker toolCallTracker;
 
-    public RagSearchTool(VectorStore vectorStore, RagProperties ragProperties) {
+    public RagSearchTool(VectorStore vectorStore, RagProperties ragProperties,
+                         ToolCallTracker toolCallTracker) {
         this.vectorStore = vectorStore;
         this.ragProperties = ragProperties;
+        this.toolCallTracker = toolCallTracker;
     }
 
     @Tool(description = "적재된 문서 지식베이스에서 질문과 관련된 내용을 검색한다. "
             + "문서·자료에 근거가 필요한 질문에 답하기 전에 호출하고, 반환된 출처를 근거로 답하라.")
     public String searchDocuments(
             @ToolParam(description = "검색할 질의(자연어 키워드/문장)") String query) {
+        toolCallTracker.record("searchDocuments");
         List<Document> documents = vectorStore.similaritySearch(SearchRequest.builder()
                 .query(query)
                 .topK(ragProperties.getTopK())

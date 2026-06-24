@@ -2,6 +2,7 @@ package com.kyuloud.ai.agent.service;
 
 import com.kyuloud.ai.agent.dto.AgentResponse;
 import com.kyuloud.ai.agent.tool.DateTimeTool;
+import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
 import com.kyuloud.ai.agent.tool.RagSearchTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -27,14 +28,22 @@ public class AgentService {
     private final ChatClient chatClient;
     private final DateTimeTool dateTimeTool;
     private final RagSearchTool ragSearchTool;
+    private final DocumentCatalogTool documentCatalogTool;
+    private final ToolCallTracker toolCallTracker;
 
     @Value("classpath:prompts/system-agent.st")
     private Resource agentSystemPrompt;
 
-    public AgentService(ChatClient chatClient, DateTimeTool dateTimeTool, RagSearchTool ragSearchTool) {
+    public AgentService(ChatClient chatClient,
+                        DateTimeTool dateTimeTool,
+                        RagSearchTool ragSearchTool,
+                        DocumentCatalogTool documentCatalogTool,
+                        ToolCallTracker toolCallTracker) {
         this.chatClient = chatClient;
         this.dateTimeTool = dateTimeTool;
         this.ragSearchTool = ragSearchTool;
+        this.documentCatalogTool = documentCatalogTool;
+        this.toolCallTracker = toolCallTracker;
     }
 
     public AgentResponse chat(String conversationId, String message) {
@@ -44,11 +53,11 @@ public class AgentService {
         String reply = chatClient.prompt()
                 .system(agentSystemPrompt)
                 .user(message)
-                .tools(dateTimeTool, ragSearchTool)
+                .tools(dateTimeTool, ragSearchTool, documentCatalogTool)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid))
                 .call()
                 .content();
 
-        return new AgentResponse(reply);
+        return new AgentResponse(reply, toolCallTracker.getCalledTools());
     }
 }

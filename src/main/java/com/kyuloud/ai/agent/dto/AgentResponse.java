@@ -1,13 +1,15 @@
 package com.kyuloud.ai.agent.dto;
 
+import java.util.List;
+
 /**
  * Phase 3 — Agent 채팅 응답.
  *
- * <p>현재는 최종 답변만 반환한다. (Phase 3c에서 호출된 도구 추적(tool-call trace) 확장 예정)
- *
- * @param reply LLM 최종 답변 텍스트
+ * @param reply     LLM 최종 답변 텍스트
+ * @param toolsUsed 이번 응답에서 LLM이 호출한 도구 이름 목록(호출 순서, tool-call trace)
  */
 public record AgentResponse(
-        String reply
+        String reply,
+        List<String> toolsUsed
 ) {
 }

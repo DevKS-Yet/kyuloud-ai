@@ -314,11 +314,12 @@ spring:
 - **완료 기준**: 적재 문서 관련 질문 시 Agent가 **스스로** `RagSearchTool`을 호출해 근거 기반 답변(2b의 advisor 자동 주입과 달리 호출 여부를 LLM이 판단).
 - **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜ (tool-capable 모델 + pgvector 적재 문서 필요).
 
-#### Phase 3c — 멀티 툴 오케스트레이션 + 복합 질의
+#### Phase 3c — 멀티 툴 오케스트레이션 + 복합 질의 🚧 코드 구현 완료 · 검증 대기
 1. `tool/DocumentCatalogTool` — `DocumentMetadataRepository`로 적재 문서 목록/메타 조회.
-2. `AgentService`에서 DateTime + RagSearch + DocumentCatalog + Memory를 단일 `ChatClient`에 결합.
-3. (선택) `AgentResponse`에 호출된 도구 추적(tool-call trace) 노출 — 로깅 advisor 또는 observation 기반.
+2. `AgentService`에서 DateTime + RagSearch + DocumentCatalog + Memory를 단일 `ChatClient`에 결합(`.tools(...)`).
+3. `AgentResponse.toolsUsed`로 호출된 도구 추적(tool-call trace) 노출 — `@RequestScope` `ToolCallTracker`에 각 도구가 호출 시 자기 이름 기록(요청 간 격리, 싱글톤 도구엔 스코프 프록시 주입).
 - **완료 기준**: "오늘 날짜 기준으로 X 문서 요약해줘" 같은 도구+RAG 복합 질의를 자율적으로 수행.
+- **검증 진행**: `compileJava` ✅. 실호출 검증 ⬜ (tool-capable 모델 + pgvector 적재 문서 필요). 응답의 `toolsUsed`로 어떤 도구가 호출됐는지 확인 가능.
 
 #### Phase 3d — 확장 (선택)
 - 스트리밍 tool-calling(`POST /api/agent/chat/stream`), `WebSearchTool`/`DomainTool`, MCP Client(`spring-ai-starter-mcp-client`)로 외부 표준 도구 연동, 명시적 `Planner` 단계 분리(복잡한 multi-step 계획 수립).
