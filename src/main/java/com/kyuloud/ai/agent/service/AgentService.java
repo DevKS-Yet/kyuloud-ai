@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -39,7 +40,16 @@ public class AgentService {
     private final DocumentCatalogTool documentCatalogTool;
     private final WebSearchTool webSearchTool;
     private final ToolCallTracker toolCallTracker;
-    private final SyncMcpToolCallbackProvider mcpToolCallbackProvider;
+
+    /**
+     * MCP 도구 공급자(optional). 생성자에서 즉시 해석하지 않고 {@link ObjectProvider} 로 보관해,
+     * MCP 미설정/연결 실패가 {@code AgentService} 빈 생성을 깨뜨리지 않게 한다.
+     */
+    private final ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider;
+
+    /** 최초 1회 lazy 해석한 MCP 도구 캐시(해석 실패 시 빈 배열). */
+    private volatile ToolCallback[] mcpToolCallbacks;
+    private volatile boolean mcpResolved;
 
     @Value("classpath:prompts/system-agent.st")
     private Resource agentSystemPrompt;
@@ -57,12 +67,40 @@ public class AgentService {
         this.documentCatalogTool = documentCatalogTool;
         this.webSearchTool = webSearchTool;
         this.toolCallTracker = toolCallTracker;
-        this.mcpToolCallbackProvider = mcpProvider.getIfAvailable();
+        this.mcpProvider = mcpProvider;
+    }
+
+    /**
+     * MCP 도구를 lazy 하게 1회 해석한다. MCP 가 비활성(빈 없음)이거나 연결/조회에 실패하면
+     * 빈 배열을 반환하고 캐시해, 이후 요청과 앱 기동에 영향을 주지 않는다(graceful degrade).
+     */
+    private ToolCallback[] mcpToolCallbacks() {
+        if (mcpResolved) {
+            return mcpToolCallbacks;
+        }
+        synchronized (this) {
+            if (!mcpResolved) {
+                ToolCallback[] resolved = new ToolCallback[0];
+                try {
+                    SyncMcpToolCallbackProvider provider = mcpProvider.getIfAvailable();
+                    if (provider != null) {
+                        resolved = provider.getToolCallbacks();
+                        log.info("MCP 도구 {}개 로드됨", resolved.length);
+                    }
+                } catch (Exception e) {
+                    log.warn("MCP 도구 로드 실패 — MCP 없이 진행합니다: {}", e.getMessage());
+                }
+                this.mcpToolCallbacks = resolved;
+                this.mcpResolved = true;
+            }
+        }
+        return mcpToolCallbacks;
     }
 
     public AgentResponse chat(String conversationId, String message) {
         String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
-        log.debug("agent chat: cid={}, message={}, mcp={}", cid, message, mcpToolCallbackProvider != null);
+        ToolCallback[] mcp = mcpToolCallbacks();
+        log.debug("agent chat: cid={}, message={}, mcpTools={}", cid, message, mcp.length);
 
         try {
             var spec = chatClient.prompt()
@@ -71,8 +109,8 @@ public class AgentService {
                     .tools(dateTimeTool, ragSearchTool, documentCatalogTool, webSearchTool)
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid));
 
-            if (mcpToolCallbackProvider != null) {
-                spec = spec.tools((Object[]) mcpToolCallbackProvider.getToolCallbacks());
+            if (mcp.length > 0) {
+                spec = spec.tools((Object[]) mcp);
             }
 
             String reply = spec.call().content();
@@ -89,7 +127,8 @@ public class AgentService {
      */
     public Flux<String> stream(String conversationId, String message) {
         String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
-        log.debug("agent stream: cid={}, message={}, mcp={}", cid, message, mcpToolCallbackProvider != null);
+        ToolCallback[] mcp = mcpToolCallbacks();
+        log.debug("agent stream: cid={}, message={}, mcpTools={}", cid, message, mcp.length);
 
         var spec = chatClient.prompt()
                 .system(agentSystemPrompt)
@@ -97,8 +136,8 @@ public class AgentService {
                 .tools(dateTimeTool, ragSearchTool, documentCatalogTool, webSearchTool)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid));
 
-        if (mcpToolCallbackProvider != null) {
-            spec = spec.tools((Object[]) mcpToolCallbackProvider.getToolCallbacks());
+        if (mcp.length > 0) {
+            spec = spec.tools((Object[]) mcp);
         }
 
         return spec.stream().content();

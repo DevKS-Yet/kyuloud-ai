@@ -32,17 +32,20 @@ spring:
         # nomic-embed-text 임베딩 차원
         dimensions: 768
     # Phase 3d-3 — IntelliJ MCP 서버 연동
-    # 정확한 URL은 IntelliJ > Settings > Tools > MCP Server > [Copy SSE Config] 에서 확인
-    # 포트는 동적 할당되므로 반드시 IDE에서 확인 후 아래에 기입할 것
-    # IntelliJ를 실행하지 않을 때는 enabled: false 로 비활성화
+    # ⚠️ 기본값 enabled:false (opt-in). true 로 켜기 전 반드시 아래를 맞출 것:
+    #   1) IntelliJ > Settings > Tools > MCP Server > Enable MCP Server
+    #   2) [Copy SSE Config] 로 정확한 url + sse-endpoint(경로) 확인 후 아래에 기입
+    #      (initialized=true 기본값이라, 잘못된 url 로 enabled:true 면 기동이 실패함)
+    #   3) IntelliJ MCP 미사용 시 enabled:false 로 둘 것
     mcp:
       client:
-        enabled: true
+        enabled: false
+        request-timeout: 20s
         sse:
           connections:
             intellij:
-              url: http://127.0.0.1:63342
-              sse-endpoint: /mcp/sse
+              url: http://127.0.0.1:64342
+              sse-endpoint: /sse
 
 # Phase 2b — RAG 검색 파라미터 (RagProperties 바인딩)
 kyuloud:
