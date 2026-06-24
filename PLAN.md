@@ -395,6 +395,7 @@ spring:
 
 #### Phase 5a — 평가 루프 🚧 코드 구현 완료 · 검증 대기
 - **흐름**: 질문 파악·계획(`PlannerService`) → (행동 실행 → 평가 → 부족 시 추가/다른 행동)* → 최종 합성(`PlannerService.synthesize`).
+- **행동 실행기 = 리서처 페르소나**(중요): loop 의 각 행동은 기본 에이전트 프롬프트(`system-agent.st`)가 아니라 전용 `system-loop-action.st` 로 실행한다. 풀 에이전트로 실행하면 첫 행동에서 도구를 여러 번 호출해 질문 전체를 답해버려 평가 루프가 1회에 끝나는 문제가 있다. 리서처는 *이번 한 행동만 조사·보고하고 최종 답은 쓰지 않으며*, 최종 답변은 `synthesize()` 에서만 만든다. → 행동이 원자화되어 검색→평가→추가검색 루프가 실제로 여러 회차 돈다. `agentSpec` 은 시스템 프롬프트를 파라미터로 받는 오버로드로 chat/plan(기본) 과 loop(리서처)를 분기.
 - **평가자**: `agent/eval/EvaluatorService` — 도구·메모리 없는 보조 ChatClient(`plannerChatClient` 재사용)로 누적 근거의 충분성을 구조화 출력 `EvaluationVerdict{sufficient, missing, nextAction}` 으로 판정. 평가 실패 시 "충분" 폴백(무한루프 방지). 프롬프트 `system-evaluator.st`.
 - **루프 제어**(`AgentService.loop`): 다음 행동은 남은 계획 단계 우선 → 소진 시 평가자 `nextAction`, 둘 다 없으면 조기 종료. 상한 `kyuloud.agent.loop.max-iterations`(기본 3). `missing` 은 다음 행동 프롬프트에 보완 지시로 전달.
 - **대화 맥락**: plan 과 동일(임시 `loopCid` 에 실제 기록 시드 → 종료 시 중간 잡음 폐기 → 사용자 대화엔 원 질문→최종 답변 한 턴만 기록). seed/record 헬퍼는 plan/loop 공유.

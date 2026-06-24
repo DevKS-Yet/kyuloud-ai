@@ -77,6 +77,10 @@ public class AgentService {
     @Value("classpath:prompts/system-agent.st")
     private Resource agentSystemPrompt;
 
+    /** Phase 5 — 평가 루프의 행동 실행용 시스템 프롬프트(리서처 페르소나: 한 행동만 조사·보고, 최종 답변 금지). */
+    @Value("classpath:prompts/system-loop-action.st")
+    private Resource loopActionSystemPrompt;
+
     public AgentService(ChatClient chatClient,
                         DateTimeTool dateTimeTool,
                         RagSearchTool ragSearchTool,
@@ -231,8 +235,9 @@ public class AgentService {
             String missingHint = null;
 
             for (int i = 1; i <= maxIterations; i++) {
-                String observation = agentSpec(loopCid, buildLoopActionPrompt(message, action, missingHint))
-                        .call().content();
+                // 행동 실행기는 리서처 페르소나: 이번 한 행동만 조사·보고하고 최종 답은 쓰지 않는다(그래야 평가 루프가 의미를 가진다).
+                String observation = agentSpec(loopActionSystemPrompt, loopCid,
+                        buildLoopActionPrompt(message, action, missingHint)).call().content();
                 evidence.add(new StepResult(i, action, observation));
 
                 EvaluationVerdict verdict = evaluatorService.evaluate(message, joinEvidence(evidence));
@@ -264,13 +269,20 @@ public class AgentService {
     }
 
     /**
-     * 도구 + 메모리(conversationId) 를 결합한 에이전트 요청 스펙을 구성한다. blocking/스트리밍/단계 실행이 공유한다.
-     * MCP 도구는 연결이 있을 때만 추가된다.
+     * 기본 에이전트 시스템 프롬프트({@code system-agent.st})로 요청 스펙을 구성한다. chat/stream/plan 단계 실행이 공유한다.
      */
     private ChatClient.ChatClientRequestSpec agentSpec(String cid, String userMessage) {
+        return agentSpec(agentSystemPrompt, cid, userMessage);
+    }
+
+    /**
+     * 도구 + 메모리(conversationId) 를 결합한 에이전트 요청 스펙을 구성한다. 시스템 프롬프트를 파라미터로 받아
+     * 호출 경로별 페르소나를 바꾼다(예: loop 는 리서처 프롬프트). MCP 도구는 연결이 있을 때만 추가된다.
+     */
+    private ChatClient.ChatClientRequestSpec agentSpec(Resource systemPrompt, String cid, String userMessage) {
         ToolCallback[] mcp = mcpToolCallbacks();
         var spec = chatClient.prompt()
-                .system(agentSystemPrompt)
+                .system(systemPrompt)
                 .user(userMessage)
                 .tools(dateTimeTool, ragSearchTool, documentCatalogTool, webSearchTool)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid));
