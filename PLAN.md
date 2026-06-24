@@ -322,7 +322,24 @@ spring:
 - **검증 완료** ✅: 타 PC 통합테스트에서 복합 질의 자율 수행 + 응답 `toolsUsed`로 호출 도구 확인.
 
 #### Phase 3d — 확장 (선택)
-- 스트리밍 tool-calling(`POST /api/agent/chat/stream`), `WebSearchTool`/`DomainTool`, MCP Client(`spring-ai-starter-mcp-client`)로 외부 표준 도구 연동, 명시적 `Planner` 단계 분리(복잡한 multi-step 계획 수립).
+> **진행 방식**: 4개 항목은 실패 도메인(스트리밍 복잡도 / 외부 API / 외부 MCP 서버 / 아키텍처)이 서로 독립적이므로, 다른 단계와 동일하게 **위험·의존성 오름차순으로 세분화**해 각 단계마다 compile + 통합테스트로 격리 검증한다. 모두 선택 항목이라 취사선택·중단이 가능하다.
+
+##### Phase 3d-1 — 스트리밍 tool-calling 🚧 코드 구현 완료 · 검증 대기
+- `POST /api/agent/chat/stream` — `AgentService.stream()`(`ChatClient.stream().content()`)으로 도구 호출 + 최종 답변 SSE 스트리밍.
+- **`ToolCallTracker` 보강**: `@RequestScope` → ThreadLocal 싱글톤으로 전환. 스트리밍 시 도구 실행이 reactor 스레드(요청 스레드 밖)에서 일어나도 `record()` 가 예외 없이 graceful degrade. blocking 경로는 동일 스레드라 추적 정확(응답 후 `reset()` 으로 누수 방지). 스트리밍 응답엔 `toolsUsed` 미포함.
+- **완료 기준**: Agent가 도구를 호출하면서도 응답을 SSE로 스트리밍. **검증 진행**: `compileJava` ✅, 실호출 검증 ⬜.
+
+##### Phase 3d-2 — WebSearchTool ⬜ (외부 검색 API)
+- `tool/WebSearchTool` — 외부 검색 API(키 필요) 연동 `@Tool`. `ToolCallTracker` 기록 포함.
+- **사전 준비**: 검색 제공자 선정 + API 키. **완료 기준**: 최신 정보 질의 시 Agent가 웹 검색 도구를 호출해 답변.
+
+##### Phase 3d-3 — MCP Client ⬜ (외부 표준 도구)
+- `spring-ai-starter-mcp-client` 의존성 추가, 외부 MCP 서버료 연동으로 표준 도구 확장.
+- **사전 준비**: 연동할 MCP 서버. **완료 기준**: MCP 서버가 노출한 도구를 Agent가 호출.
+
+##### Phase 3d-4 — Planner ⬜ (선택, 아키텍처 확장)
+- 복잡한 multi-step 작업의 명시적 계획 수립 단계(`PlannerService`) 분리. 실제 필요성이 확인된 뒤 착수.
+- **완료 기준**: 다단계 작업을 계획→실행으로 분리 수행.
 
 ### Phase 4 — 운영·품질 강화 (지속)
 - 가드레일 Advisor(PII/금칙어), 요청·응답 로깅/추적(observability).
@@ -342,6 +359,7 @@ spring:
 | 2 | GET | `/api/documents` | 적재 문서 목록 |
 | 2 | POST | `/api/rag/chat` | RAG 기반 질의 |
 | 3 | POST | `/api/agent/chat` | Agent(도구+RAG+메모리) 채팅 |
+| 3 | POST | `/api/agent/chat/stream` | Agent 스트리밍 채팅 (SSE, 3d-1) |
 
 공통: 요청에 `conversationId`(세션 식별자)를 포함해 메모리/맥락을 관리한다.
 
