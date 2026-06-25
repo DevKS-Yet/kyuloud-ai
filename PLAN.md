@@ -473,9 +473,10 @@ spring:
 - **완료 기준**: 빈약한 근거면 보강 후 답하고, 충분하면 조기 종료.
 - **구현 메모**: `OrchestratorService.research` 가 초기 조사(분해→병렬/순차 워커) 직후 `reinforce()` 로 감싼다. Phase 5 의 `EvaluatorService`(`plannerChatClient`, 구조화 `EvaluationVerdict{sufficient,missing,nextAction}`, 평가 실패 시 "충분" 안전 폴백)를 **재사용**(중복 재구현 안 함 — 6b 의 ClarificationService 재사용과 동일). 루프: 누적 근거를 **묶음 1회** 평가 → `sufficient` 면 즉시 종료(조기 종료, 비용 절감), 부족하면 `nextAction`(없으면 `missing`)을 목표로 보강 워커 1개 투입(독립 단독 실행) 후 다음 라운드. 반복은 두 상한이 함께 막음 — `kyuloud.agent.budget.max-reinforcements`(라운드, 기본 2) + 기존 `max-llm-calls`/`timeout`(`Budget.isExhausted()`); 둘 중 먼저 닿는 쪽에서 멈춰 best-effort 합성. 평가/합성 입력은 공용 `formatEvidence()` 로 렌더(synthesize 도 이를 사용하도록 리팩터). budget 에 evaluate·보강워커 LLM 호출 반영. `AgentBudgetProperties.maxReinforcements` 신설. **단위테스트(#8)는 4e 와 함께 보류**.
 
-#### Phase 6f — 정리/통일 ⬜
+#### Phase 6f — 정리/통일 ✅(코드, 실호출 검증 대기)
 - 기존 `/api/agent/chat|plan|loop|clarify`·`/api/rag/chat` deprecated 표기, RAG 단일화 마무리, 문서/Swagger 정리. (구 엔드포인트 제거는 신규 검증 후 별도 결정)
 - **완료 기준**: `/api/agent` 단일 진입점으로 전 흐름 동작, 중복 경로 정리.
+- **구현 메모**: `AgentController`(클래스+`chat/stream/plan/loop/clarify`)·`RagChatController` 에 `@Deprecated` + javadoc `@deprecated`(각 메서드가 `/api/agent` 의 어느 경로로 대체되는지 명시) — springdoc 이 OpenAPI 에 `deprecated:true` 자동 반영(별도 swagger 애너테이션 불필요). **제거는 안 함**(검증·비교용 유지, 별도 결정). **RAG 단일화**: 통합 흐름이 `KnowledgeRetriever` 직접 호출(advisor+tool 이중 노출 폐기)임을 코드/문서로 확정 — `/api/agent` 는 `RagSearchTool` 미노출(`DateTimeTool`/`WebSearchTool`/`DocumentCatalogTool` 만), `/api/rag/chat` 과 `RagSearchTool` 은 구 경로 전용으로 남김. 문서 적재·목록 `/api/documents` 는 유지(단발 채팅 `/api/chat` 도 유지 — deprecation 대상 아님). `OpenApiConfig` description 에 권장 진입점(`/api/agent`)·deprecated 안내 추가, `UnifiedAgentController` javadoc 을 전체 흐름(DIRECT/RESEARCH/CLARIFY)으로 갱신. **단위테스트(#8)는 4e 와 함께 보류**.
 
 ---
 
@@ -508,7 +509,7 @@ spring:
 - [x] **M2** RAG (문서 적재 + 검색 + 출처 응답) (✅ Phase 2a~2b 검증 완료)
 - [x] **M3** Agent (tool-calling + RAG tool + ReAct 루프) (✅ Phase 3a~3c, 통합테스트 정상)
 - [ ] **M4** 운영 강화 (가드레일/관측/영속화/테스트) — 4a~4d ✅(가드레일/관측/메트릭/영속화), 4e(테스트) 보류
-- [ ] **M5** 통합 에이전트 (Router + Orchestrator-workers + Evaluator-optimizer, 단일 `/api/agent`) — Phase 6
+- [x] **M5** 통합 에이전트 (Router + Orchestrator-workers + Evaluator-optimizer, 단일 `/api/agent`) — ✅ Phase 6a~6f(코드, 실호출 검증 대기)
   - 참고: Phase 3d-4(plan)·5(loop/clarify)는 "경험"으로 보고 Phase 6 에서 클린 재구현(구 엔드포인트는 deprecated).
 
 ---
