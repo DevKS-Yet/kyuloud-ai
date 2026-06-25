@@ -1,9 +1,12 @@
 package com.kyuloud.ai.agent.unified;
 
 import com.kyuloud.ai.agent.dto.StepResult;
+import com.kyuloud.ai.agent.eval.EvaluationVerdict;
+import com.kyuloud.ai.agent.eval.EvaluatorService;
 import com.kyuloud.ai.agent.tool.DateTimeTool;
 import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
 import com.kyuloud.ai.agent.tool.WebSearchTool;
+import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.tool.ToolCallback;
@@ -48,7 +51,9 @@ public class OrchestratorService {
 
     private final ChatClient reasonerChatClient;
     private final ChatClient workerChatClient;
+    private final EvaluatorService evaluatorService;
     private final KnowledgeRetriever knowledgeRetriever;
+    private final AgentBudgetProperties budgetProperties;
     private final DateTimeTool dateTimeTool;
     private final WebSearchTool webSearchTool;
     private final DocumentCatalogTool documentCatalogTool;
@@ -64,13 +69,17 @@ public class OrchestratorService {
 
     public OrchestratorService(@Qualifier("plannerChatClient") ChatClient reasonerChatClient,
                                @Qualifier("workerChatClient") ChatClient workerChatClient,
+                               EvaluatorService evaluatorService,
                                KnowledgeRetriever knowledgeRetriever,
+                               AgentBudgetProperties budgetProperties,
                                DateTimeTool dateTimeTool,
                                WebSearchTool webSearchTool,
                                DocumentCatalogTool documentCatalogTool) {
         this.reasonerChatClient = reasonerChatClient;
         this.workerChatClient = workerChatClient;
+        this.evaluatorService = evaluatorService;
         this.knowledgeRetriever = knowledgeRetriever;
+        this.budgetProperties = budgetProperties;
         this.dateTimeTool = dateTimeTool;
         this.webSearchTool = webSearchTool;
         this.documentCatalogTool = documentCatalogTool;

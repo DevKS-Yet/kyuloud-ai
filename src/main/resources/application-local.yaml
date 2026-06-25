@@ -70,6 +70,8 @@ kyuloud:
     budget:
       max-llm-calls: 8
       timeout-millis: 60000
+      # 6e — RESEARCH 보강 루프(충분성 평가→부족하면 보강 워커 추가) 라운드 상한. max-llm-calls 와 함께 적용.
+      max-reinforcements: 2
 
 logging:
   level:

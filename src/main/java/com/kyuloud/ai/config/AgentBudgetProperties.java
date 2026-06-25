@@ -20,4 +20,11 @@ public class AgentBudgetProperties {
 
     /** 한 요청의 총 소요시간 상한(ms). 경과 시 더 진행하지 않고 지금까지 근거로 답한다. */
     private long timeoutMillis = 60_000L;
+
+    /**
+     * RESEARCH 경로의 Evaluator-optimizer 보강 반복 상한(6e). 충분성 평가가 부족(missing)이라 판단하면 보강
+     * 워커를 추가 투입하는 라운드 수의 최대치이며, 이와 별개로 {@link #maxLlmCalls} 예산도 함께 적용된다(둘 중
+     * 먼저 닿는 쪽에서 멈춤). 0 이면 보강 없이 1회 평가만 한다(충분/부족 무관하게 보강 안 함).
+     */
+    private int maxReinforcements = 2;
 }
