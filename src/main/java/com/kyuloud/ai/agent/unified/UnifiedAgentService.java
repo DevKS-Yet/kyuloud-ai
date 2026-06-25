@@ -1,5 +1,8 @@
 package com.kyuloud.ai.agent.unified;
 
+import com.kyuloud.ai.agent.clarify.ClarificationService;
+import com.kyuloud.ai.agent.clarify.ClarificationVerdict;
+import com.kyuloud.ai.agent.dto.ClarifyingQuestion;
 import com.kyuloud.ai.agent.tool.DateTimeTool;
 import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
 import com.kyuloud.ai.agent.tool.WebSearchTool;
@@ -30,8 +33,8 @@ import java.util.List;
  * 중간 산출물은 임시 conversationId 에 적재했다 지우지 않고 {@link AgentContext}(코드)가 보유하며,
  * 도구 추적은 {@link CallTracer}(수집형, {@code ToolContext} 주입)로 병렬·스트리밍에서도 안전하게 한다.
  *
- * <p><b>Phase 6a 범위</b>: DIRECT 경로만 연결한다. Router 가 RESEARCH/CLARIFY 로 분류해도 일단 DIRECT 로
- * 폴백한다(분류 결과는 응답에 함께 노출해 관찰). RESEARCH(6c~)·CLARIFY(6b)는 이후 단계에서 채운다.
+ * <p><b>범위</b>: 6a — DIRECT 경로, 6b — CLARIFY 분기. Router 가 RESEARCH 로 분류하면 아직 DIRECT 로
+ * 폴백한다(RESEARCH 는 6c~ 에서 채운다). 분류 결과(routed)와 실제 수행(executed)을 응답에 함께 노출한다.
  */
 @Slf4j
 @Service
@@ -40,6 +43,7 @@ public class UnifiedAgentService {
     private static final String DEFAULT_CONVERSATION_ID = "default";
 
     private final RouterService routerService;
+    private final ClarificationService clarificationService;
     private final KnowledgeRetriever knowledgeRetriever;
     private final ChatClient workerChatClient;
     private final ChatMemory chatMemory;
@@ -56,6 +60,7 @@ public class UnifiedAgentService {
     private Resource directSystemPrompt;
 
     public UnifiedAgentService(RouterService routerService,
+                               ClarificationService clarificationService,
                                KnowledgeRetriever knowledgeRetriever,
                                @Qualifier("workerChatClient") ChatClient workerChatClient,
                                ChatMemory chatMemory,
@@ -65,6 +70,7 @@ public class UnifiedAgentService {
                                DocumentCatalogTool documentCatalogTool,
                                ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider) {
         this.routerService = routerService;
+        this.clarificationService = clarificationService;
         this.knowledgeRetriever = knowledgeRetriever;
         this.workerChatClient = workerChatClient;
         this.chatMemory = chatMemory;
@@ -87,9 +93,18 @@ public class UnifiedAgentService {
         log.debug("unified agent: cid={}, message={}", cid, message);
 
         List<Message> history = chatMemory.get(cid);
-        RouteDecision decision = routeWithBudget(ctx, message, renderHistory(history));
+        String context = renderHistory(history);
+        RouteDecision decision = routeWithBudget(ctx, message, context);
 
-        // Phase 6a: 모든 전략을 DIRECT 로 폴백 실행한다(RESEARCH/CLARIFY 는 6b~6c 에서 연결).
+        // CLARIFY 분기(6b): Router 가 CLARIFY 면 명확화 전문가로 되묻기를 생성한다. 전문가가 되물을 게 없다고
+        // 판단하면(Router 과민) DIRECT 로 진행한다. RESEARCH 는 아직 DIRECT 로 폴백(6c~).
+        if (decision.strategy() == RouteStrategy.CLARIFY) {
+            UnifiedAgentResponse clarify = tryClarify(ctx, cid, message, context);
+            if (clarify != null) {
+                return clarify;
+            }
+        }
+
         RouteStrategy executed = RouteStrategy.DIRECT;
         String reply = direct(ctx, history, message);
 
@@ -97,7 +112,44 @@ public class UnifiedAgentService {
         log.debug("unified agent done: routed={}, executed={}, llmCalls={}, tools={}",
                 decision.strategy(), executed, ctx.budget().usedLlmCalls(), ctx.tracer().getCalledTools());
         return new UnifiedAgentResponse(message, decision.strategy(), executed, reply,
-                ctx.tracer().getCalledTools());
+                List.of(), ctx.tracer().getCalledTools());
+    }
+
+    /**
+     * CLARIFY 경로(6b) — 답변하지 않고, 제대로 답하기 위해 사용자에게 되물을 핵심 정보를 질문+선택지로 만든다.
+     * 대화 맥락을 반영해 이미 아는 정보는 묻지 않는다. 되물을 게 있으면 그 턴(원 질문 → 되묻기)을 메모리에 기록해,
+     * 사용자가 같은 {@code conversationId} 로 답을 더해 재호출하면 맥락이 이어지게 한다(연속성, #5).
+     *
+     * <p>명확화 전문가가 되물을 게 없다고 판단하면(Router 의 CLARIFY 가 과했던 경우) {@code null} 을 반환해
+     * 호출부가 DIRECT 로 진행하게 한다.
+     */
+    private UnifiedAgentResponse tryClarify(AgentContext ctx, String cid, String message, String context) {
+        accountLlmCall(ctx, "clarify");
+        ClarificationVerdict verdict = clarificationService.assess(message, context);
+        List<ClarifyingQuestion> questions = verdict.questions();
+        if (!verdict.needsClarification() || questions == null || questions.isEmpty()) {
+            log.debug("unified agent: Router=CLARIFY 였으나 되물을 정보 없음 → DIRECT 진행");
+            return null;
+        }
+
+        String rendered = renderClarification(questions);
+        // 연속성(#5): 되묻기를 한 턴으로 기록해 재호출 시 맥락 유지. (DIRECT 의 recordTurn 과 동일한 자리)
+        recordTurn(cid, message, rendered);
+        log.debug("unified agent done: routed=CLARIFY, executed=CLARIFY, questions={}", questions.size());
+        return new UnifiedAgentResponse(message, RouteStrategy.CLARIFY, RouteStrategy.CLARIFY,
+                rendered, questions, ctx.tracer().getCalledTools());
+    }
+
+    /** 되묻는 질문 목록을 사람이 읽을 수 있는 텍스트로 렌더링한다(응답 reply + 메모리 기록용). */
+    private String renderClarification(List<ClarifyingQuestion> questions) {
+        StringBuilder sb = new StringBuilder("정확히 답하려면 몇 가지 확인이 필요합니다:");
+        for (ClarifyingQuestion q : questions) {
+            sb.append("\n- ").append(q.question());
+            if (q.options() != null && !q.options().isEmpty()) {
+                sb.append(" (선택: ").append(String.join(" / ", q.options())).append(")");
+            }
+        }
+        return sb.toString();
     }
 
     /** Router 분류 1회를 예산에 반영하고 수행한다. */

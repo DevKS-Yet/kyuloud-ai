@@ -452,10 +452,11 @@ spring:
 - **완료 기준**: 단순 질문이 Router→DIRECT 로 흘러 답변. budget/정지조건·tracer(ToolContext) 동작, Guardrail 입력 차단 동작.
 - **구현 메모**: 신규 패키지 `agent.unified` — `UnifiedAgentController`(`POST /api/agent`)·`UnifiedAgentService`·`RouterService`·`KnowledgeRetriever`(RAG 직접 검색, 도구 미노출)·`AgentContext`/`Budget`/`CallTracer`(수집형)·`RouteStrategy`/`RouteDecision`/`UnifiedAgentResponse`. 클라이언트 `routerChatClient`/`workerChatClient` 신설(메모리 advisor 없음 — 흐름이 history 를 `.messages()` 로 직접 주입하고 최종 한 턴만 기록 → seed/clear 트릭 폐기). 도구(`DateTimeTool`/`WebSearchTool`/`DocumentCatalogTool`/`RagSearchTool`)에 선택적 `ToolContext` 파라미터 추가 — 기존 ThreadLocal `ToolCallTracker`(구 엔드포인트용)와 신규 `CallTracer` 양쪽 기록(상호 무해). budget 설정: `kyuloud.agent.budget.{max-llm-calls,timeout-millis}`. 응답에 `routed`/`executed` 둘 다 노출(6a 는 항상 executed=DIRECT 폴백이라 분류 동작을 관찰 가능). **단위테스트(#8)는 4e 와 함께 보류**.
 
-#### Phase 6b — CLARIFY 분기 ⬜
+#### Phase 6b — CLARIFY 분기 ✅(코드, 실호출 검증 대기)
 - Router 가 `CLARIFY` 로 분류 시(핵심 정보 부족으로 전략 선택 불가) 되묻는 질문+선택지 생성 → 응답(REST 왕복). 대화 맥락 반영해 이미 아는 정보는 안 물음.
 - **연속성(#5)**: CLARIFY 턴(원 질문 + 되묻기)을 메모리에 기록해, 사용자가 같은 `conversationId` 로 재호출하면 맥락이 이어진다.
 - **완료 기준**: 모호한 질문 → 되묻기 후 재호출 시 맥락 유지, 명확한 질문 → 해당 전략으로 진행.
+- **구현 메모**: `UnifiedAgentService.tryClarify` — CLARIFY 생성은 5b 의 `ClarificationService`(전문가)를 **재사용**(중복 재구현 안 함; `plannerChatClient` 라 Guardrail/Logging/Metrics 이미 적용). Router(거친 게이트)가 CLARIFY 라도 전문가가 되물을 게 없으면 `null` 반환 → **DIRECT 폴백**(Router 과민 흡수). 되물을 게 있으면 `recordTurn(원질문 → 렌더링된 되묻기)` 으로 한 턴 기록(연속성). 응답에 `clarification`(구조화 질문+선택지) 필드 추가, `reply` 는 사람이 읽는 렌더링 텍스트. budget 에 clarify LLM 호출 1회 반영.
 
 #### Phase 6c — RESEARCH: Orchestrator-workers (순차) ⬜
 - `OrchestratorService` — 중앙 LLM 이 질문을 워커 하위작업으로 **동적 분해** → 각 워커(리서처 페르소나, 도구 사용, 근거만 보고)를 **순차** 실행 → `AgentContext.evidence` 누적 → `synthesize`.
