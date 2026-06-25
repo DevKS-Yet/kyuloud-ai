@@ -445,11 +445,12 @@ spring:
 7. **스트리밍 (#7)**: `/api/agent` 는 우선 **blocking** 으로 구현. 최종 synthesis 스트리밍은 추후(멀티스텝 중간은 비스트리밍).
 8. **테스트 (#8)**: Phase 6 는 멀티스텝이라 회귀 위험이 커, 최소 **Router 분류 + orchestrator 분해**는 단위테스트를 함께 작성(보류 중인 4e 와 연결).
 
-#### Phase 6a — 골격: 단일 엔드포인트 + Router + DIRECT ⬜
+#### Phase 6a — 골격: 단일 엔드포인트 + Router + DIRECT ✅(코드, 실호출 검증 대기)
 - `POST /api/agent` 신설. `RouterService`(구조화 출력 전략 enum, 오분류 폴백 DIRECT) + `AgentContext`(conversationId·budget·수집형 tracer) 기반 골격. 신규 클라이언트에 Guardrail/Logging/Metrics advisor 적용(#6).
 - **DIRECT 경로만** 연결: 항상 저비용 RAG 1회 검색 + threshold 필터(#1=c) → 단발 답변. Router 가 RESEARCH/CLARIFY 로 분류해도 일단 DIRECT 로 폴백.
 - **`ToolContext` tracer PoC(#3)**: `.toolContext(Map)` 로 요청별 수집기를 도구에 전달해 도구 호출이 기록되는지 검증(6d 병렬의 선행 조건).
 - **완료 기준**: 단순 질문이 Router→DIRECT 로 흘러 답변. budget/정지조건·tracer(ToolContext) 동작, Guardrail 입력 차단 동작.
+- **구현 메모**: 신규 패키지 `agent.unified` — `UnifiedAgentController`(`POST /api/agent`)·`UnifiedAgentService`·`RouterService`·`KnowledgeRetriever`(RAG 직접 검색, 도구 미노출)·`AgentContext`/`Budget`/`CallTracer`(수집형)·`RouteStrategy`/`RouteDecision`/`UnifiedAgentResponse`. 클라이언트 `routerChatClient`/`workerChatClient` 신설(메모리 advisor 없음 — 흐름이 history 를 `.messages()` 로 직접 주입하고 최종 한 턴만 기록 → seed/clear 트릭 폐기). 도구(`DateTimeTool`/`WebSearchTool`/`DocumentCatalogTool`/`RagSearchTool`)에 선택적 `ToolContext` 파라미터 추가 — 기존 ThreadLocal `ToolCallTracker`(구 엔드포인트용)와 신규 `CallTracer` 양쪽 기록(상호 무해). budget 설정: `kyuloud.agent.budget.{max-llm-calls,timeout-millis}`. 응답에 `routed`/`executed` 둘 다 노출(6a 는 항상 executed=DIRECT 폴백이라 분류 동작을 관찰 가능). **단위테스트(#8)는 4e 와 함께 보류**.
 
 #### Phase 6b — CLARIFY 분기 ⬜
 - Router 가 `CLARIFY` 로 분류 시(핵심 정보 부족으로 전략 선택 불가) 되묻는 질문+선택지 생성 → 응답(REST 왕복). 대화 맥락 반영해 이미 아는 정보는 안 물음.

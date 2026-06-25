@@ -1,9 +1,11 @@
 package com.kyuloud.ai.agent.tool;
 
 import com.kyuloud.ai.agent.service.ToolCallTracker;
+import com.kyuloud.ai.agent.unified.CallTracer;
 import com.kyuloud.ai.domain.entity.DocumentMetadata;
 import com.kyuloud.ai.domain.repository.DocumentMetadataRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
@@ -31,8 +33,9 @@ public class DocumentCatalogTool {
 
     @Tool(description = "적재된 문서 목록과 메타데이터(문서명/청크 수/적재 시각)를 조회한다. "
             + "어떤 문서가 있는지, 무엇을 적재했는지 등 문서 목록에 대한 질문에 호출한다.")
-    public String listDocuments() {
+    public String listDocuments(ToolContext toolContext) {
         toolCallTracker.record("listDocuments");
+        CallTracer.recordTo(toolContext, "listDocuments");
         List<DocumentMetadata> documents = metadataRepository.findAllByOrderByIdDesc();
         if (documents.isEmpty()) {
             return "적재된 문서가 없습니다.";

@@ -1,8 +1,10 @@
 package com.kyuloud.ai.agent.tool;
 
 import com.kyuloud.ai.agent.service.ToolCallTracker;
+import com.kyuloud.ai.agent.unified.CallTracer;
 import com.kyuloud.ai.config.RagProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -40,8 +42,10 @@ public class RagSearchTool {
     @Tool(description = "적재된 문서 지식베이스에서 질문과 관련된 내용을 검색한다. "
             + "문서·자료에 근거가 필요한 질문에 답하기 전에 호출하고, 반환된 출처를 근거로 답하라.")
     public String searchDocuments(
-            @ToolParam(description = "검색할 질의(자연어 키워드/문장)") String query) {
+            @ToolParam(description = "검색할 질의(자연어 키워드/문장)") String query,
+            ToolContext toolContext) {
         toolCallTracker.record("searchDocuments");
+        CallTracer.recordTo(toolContext, "searchDocuments");
         List<Document> documents = vectorStore.similaritySearch(SearchRequest.builder()
                 .query(query)
                 .topK(ragProperties.getTopK())

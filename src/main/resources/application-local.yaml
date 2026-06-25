@@ -66,6 +66,10 @@ kyuloud:
   agent:
     loop:
       max-iterations: 3
+    # Phase 6 — 통합 에이전트 요청 단위 예산/정지조건(무한루프·비용 폭주 방지, 초과 시 best-effort 합성)
+    budget:
+      max-llm-calls: 8
+      timeout-millis: 60000
 
 logging:
   level:

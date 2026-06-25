@@ -1,8 +1,10 @@
 package com.kyuloud.ai.agent.tool;
 
 import com.kyuloud.ai.agent.service.ToolCallTracker;
+import com.kyuloud.ai.agent.unified.CallTracer;
 import com.kyuloud.ai.config.SearchProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -40,8 +42,10 @@ public class WebSearchTool {
             + "학습 데이터에 없는 최신 정보·시사·날씨·이슈 등 실시간 정보가 필요한 질문에 호출한다. "
             + "문서 지식베이스 검색이 아닌 '웹 전체'를 대상으로 한다.")
     public String searchWeb(
-            @ToolParam(description = "검색할 질의(자연어 키워드/문장, 가능하면 영어가 검색 품질에 유리)") String query) {
+            @ToolParam(description = "검색할 질의(자연어 키워드/문장, 가능하면 영어가 검색 품질에 유리)") String query,
+            ToolContext toolContext) {
         toolCallTracker.record("searchWeb");
+        CallTracer.recordTo(toolContext, "searchWeb");
         log.debug("WebSearchTool: query='{}'", query);
 
         try {
