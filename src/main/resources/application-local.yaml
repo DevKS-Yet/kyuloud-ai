@@ -16,13 +16,13 @@ spring:
     ollama:
       base-url: http://localhost:11434
       chat:
-        options:
-          model: gemma4:e4b
-          temperature: 0.7
+        model: gemma4:cloud
+        temperature: 0.7
       # 임베딩 모델은 RAG(Phase 2)에서 사용
       embedding:
-        options:
-          model: nomic-embed-text
+        model: nomic-embed-text
+      init:
+        pull-model-strategy: when_missing
     vectorstore:
       pgvector:
         # 스키마(vector_store 테이블)·확장 자동 생성
