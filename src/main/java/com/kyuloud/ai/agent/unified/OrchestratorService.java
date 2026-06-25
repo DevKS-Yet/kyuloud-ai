@@ -24,7 +24,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /**
- * Phase 6c~6d — RESEARCH 경로: Orchestrator-workers(독립 작업 병렬 + 의존 작업 순차).
+ * Phase 6c~6e — RESEARCH 경로: Orchestrator-workers(독립 작업 병렬 + 의존 작업 순차) + Evaluator-optimizer 보강.
  *
  * <p>Anthropic "Building Effective Agents" 의 Orchestrator-workers 패턴을 워크플로로 구현한다:
  * 중앙 LLM(orchestrator)이 다단계 질문을 조사 가능한 워커 하위작업으로 <b>동적 분해</b>한 뒤, 각 워커가
@@ -42,7 +42,11 @@ import java.util.concurrent.Future;
  *   <li>워커 실행 — 도구를 갖춘 {@code workerChatClient}. DIRECT 와 같은 도구셋 + 요청별 {@link CallTracer}.</li>
  * </ul>
  *
- * <p>정지조건(#4): {@link Budget} 이 소진되면 남은 워커 배치 투입을 멈추고 지금까지의 근거로 best-effort
+ * <p><b>보강(6e)</b>: 초기 조사 후 누적 근거를 {@link EvaluatorService 평가자}가 <b>묶음 1회</b> 평가해
+ * 충분하면 조기 종료하고, 부족하면 평가자가 제시한 다음 행동을 목표로 보강 워커를 더 투입한다. 반복은
+ * {@code maxReinforcements}(라운드) 와 {@link Budget}(전체 LLM·시간) 두 상한이 함께 막는다.
+ *
+ * <p>정지조건(#4): {@link Budget} 이 소진되면 남은 워커 배치·보강 투입을 멈추고 지금까지의 근거로 best-effort
  * 합성한다(단, 최소 1개 배치는 반드시 수행해 빈 근거 합성을 피한다).
  */
 @Slf4j
@@ -91,7 +95,8 @@ public class OrchestratorService {
      *
      * <p>order 순으로 훑으며 연속된 독립 작업({@code dependsOnPrevious=false})을 한 배치로 모아 병렬 실행하고,
      * 의존 작업({@code true})을 만나면 그 전까지의 배치를 먼저 모두 마친 뒤(배리어) 그 작업을 단독 수행한다.
-     * 분해/워커/합성 각 LLM 호출은 {@code ctx.budget()} 로 정지조건을 따른다(배치 단위로 게이팅, #4).
+     * 초기 조사를 마치면 {@link #reinforce Evaluator-optimizer 보강 루프}(6e)로 근거 충분성을 평가해 부족하면
+     * 보강 워커를 더 투입한다. 분해/워커/평가/합성 각 LLM 호출은 {@code ctx.budget()} 로 정지조건을 따른다(#4).
      *
      * @param ctx      요청 컨텍스트(budget·tracer·evidence 공유)
      * @param question 원본 사용자 질문
@@ -117,7 +122,60 @@ public class OrchestratorService {
         }
         runBatch(ctx, independentBatch, mcp);   // 남은 독립 작업 병렬 실행
 
+        reinforce(ctx, question, mcp);          // 6e — 충분성 평가→부족하면 보강 워커 추가
+
         return synthesize(ctx, question);
+    }
+
+    /**
+     * Phase 6e — Evaluator-optimizer 보강 루프. 초기 조사로 모은 근거가 질문에 충분한지 평가하고, 부족하면
+     * 평가자가 제시한 다음 행동({@code nextAction})을 목표로 보강 워커를 1개 더 투입한다. 충분하다고 판정되면
+     * 즉시 멈춘다(조기 종료 — 빈약하지 않은 근거엔 비용을 더 쓰지 않음).
+     *
+     * <p>워커별이 아니라 누적 근거 <b>묶음 1회</b>를 평가해 비용을 아낀다(패턴 매핑). 반복은 두 상한이 함께
+     * 막는다: {@code maxReinforcements}(라운드 수)와 {@link Budget}(전체 LLM 호출·시간) — 둘 중 먼저 닿는
+     * 쪽에서 멈춘다. 평가 실패는 {@link EvaluatorService} 가 "충분" 폴백을 주므로 루프가 안전하게 종료된다(#4).
+     */
+    private void reinforce(AgentContext ctx, String question, ToolCallback[] mcp) {
+        int maxRounds = budgetProperties.getMaxReinforcements();
+        for (int round = 1; round <= maxRounds; round++) {
+            if (ctx.budget().isExhausted()) {
+                log.warn("orchestrator: 예산 소진 → 보강 평가 중단(라운드 {}), 지금까지 근거로 합성", round);
+                return;
+            }
+            accountLlmCall(ctx, "evaluate");
+            EvaluationVerdict verdict = evaluatorService.evaluate(question, formatEvidence(ctx.evidence()));
+            if (verdict.sufficient()) {
+                log.debug("orchestrator: 근거 충분 → 보강 종료(조기 종료, 라운드 {})", round);
+                return;
+            }
+
+            String objective = reinforcementObjective(verdict);
+            if (!StringUtils.hasText(objective)) {
+                log.debug("orchestrator: 부족하나 보강할 구체 행동 없음 → 보강 종료");
+                return;
+            }
+            if (ctx.budget().isExhausted()) {
+                log.warn("orchestrator: 예산 소진 → 보강 워커 미투입(라운드 {})", round);
+                return;
+            }
+
+            int nextOrder = ctx.evidence().size() + 1;
+            WorkerTask task = new WorkerTask(nextOrder, objective, false);
+            log.debug("orchestrator: 근거 부족(missing={}) → 보강 워커[{}] 투입: {}",
+                    verdict.missing(), nextOrder, objective);
+            accountLlmCall(ctx, "reinforce-worker-" + nextOrder);
+            ctx.addEvidence(runWorker(ctx, task, mcp));
+        }
+        log.debug("orchestrator: 보강 라운드 상한({}) 도달 → 합성", maxRounds);
+    }
+
+    /** 보강 워커의 조사 목표 — 평가자가 제시한 다음 행동(nextAction)을 우선 쓰고, 없으면 부족분(missing)으로 대체. */
+    private String reinforcementObjective(EvaluationVerdict verdict) {
+        if (StringUtils.hasText(verdict.nextAction())) {
+            return verdict.nextAction();
+        }
+        return verdict.missing();
     }
 
     /**
@@ -231,20 +289,25 @@ public class OrchestratorService {
             return "조사를 통해 답변에 필요한 근거를 확보하지 못했습니다. 질문을 더 구체적으로 알려주시면 다시 조사하겠습니다.";
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("원래 질문:\n").append(question).append("\n\n워커별 조사 근거:\n");
-        for (StepResult e : evidence) {
-            sb.append("[근거 ").append(e.order()).append("] ").append(e.description())
-                    .append("\n→ ").append(e.result()).append("\n\n");
-        }
-        sb.append("위 근거를 종합해 원래 질문에 대한 최종 답변을 작성하세요.");
+        String prompt = "원래 질문:\n" + question + "\n\n워커별 조사 근거:\n" + formatEvidence(evidence)
+                + "\n위 근거를 종합해 원래 질문에 대한 최종 답변을 작성하세요.";
 
         accountLlmCall(ctx, "orchestrator-synthesize");
         return reasonerChatClient.prompt()
                 .system(synthesisSystemPrompt)
-                .user(sb.toString())
+                .user(prompt)
                 .call()
                 .content();
+    }
+
+    /** 누적 근거를 "[근거 N] 목표 → 결과" 블록 텍스트로 렌더링한다(평가·합성 입력 공용). */
+    private String formatEvidence(List<StepResult> evidence) {
+        StringBuilder sb = new StringBuilder();
+        for (StepResult e : evidence) {
+            sb.append("[근거 ").append(e.order()).append("] ").append(e.description())
+                    .append("\n→ ").append(e.result()).append("\n\n");
+        }
+        return sb.toString();
     }
 
     private WorkerPlan singleTaskFallback(String question) {

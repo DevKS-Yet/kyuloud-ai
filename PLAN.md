@@ -468,9 +468,10 @@ spring:
 - **완료 기준**: 독립 워커 병렬 실행으로 지연 단축, 도구추적 정확.
 - **구현 메모**: `WorkerTask` 에 `dependsOnPrevious` 플래그 추가(분해 시 모델이 의존성 표시; 불확실하면 false 권장 — 프롬프트 명시). `OrchestratorService.research` 가 order 순으로 훑으며 연속된 독립 작업(false)을 한 배치로 모아 `Executors.newVirtualThreadPerTaskExecutor()`(try-with-resources)로 **병렬** 실행하고, 의존 작업(true)을 만나면 직전 배치를 모두 마친 뒤(배리어) 단독 수행. 결과는 `Future` 를 제출 순서(=order)로 거둬 근거 순서 보존, 개별 워커 실패는 해당 근거만 생략(best-effort). 같은 요청 워커들이 하나의 `CallTracer`(내부 `CopyOnWriteArrayList`) 공유 → 병렬 도구추적 안전(6a PoC 메커니즘 실사용). budget 정지조건은 **배치 경계**에서 게이팅(워커당 정밀 차단 아님, 최소 1배치 보장). 명시적 가상스레드 executor 라 `spring.threads.virtual.enabled` 와 무관하게 동작(설정은 이미 켜져 있음). **단위테스트(#8)는 4e 와 함께 보류**.
 
-#### Phase 6e — Evaluator-optimizer 통합 ⬜
+#### Phase 6e — Evaluator-optimizer 통합 ✅(코드, 실호출 검증 대기)
 - orchestrator 결과를 충분성 평가로 감싸 부족하면(missing) 워커를 추가 투입(보강 루프). budget 상한 내에서 반복.
 - **완료 기준**: 빈약한 근거면 보강 후 답하고, 충분하면 조기 종료.
+- **구현 메모**: `OrchestratorService.research` 가 초기 조사(분해→병렬/순차 워커) 직후 `reinforce()` 로 감싼다. Phase 5 의 `EvaluatorService`(`plannerChatClient`, 구조화 `EvaluationVerdict{sufficient,missing,nextAction}`, 평가 실패 시 "충분" 안전 폴백)를 **재사용**(중복 재구현 안 함 — 6b 의 ClarificationService 재사용과 동일). 루프: 누적 근거를 **묶음 1회** 평가 → `sufficient` 면 즉시 종료(조기 종료, 비용 절감), 부족하면 `nextAction`(없으면 `missing`)을 목표로 보강 워커 1개 투입(독립 단독 실행) 후 다음 라운드. 반복은 두 상한이 함께 막음 — `kyuloud.agent.budget.max-reinforcements`(라운드, 기본 2) + 기존 `max-llm-calls`/`timeout`(`Budget.isExhausted()`); 둘 중 먼저 닿는 쪽에서 멈춰 best-effort 합성. 평가/합성 입력은 공용 `formatEvidence()` 로 렌더(synthesize 도 이를 사용하도록 리팩터). budget 에 evaluate·보강워커 LLM 호출 반영. `AgentBudgetProperties.maxReinforcements` 신설. **단위테스트(#8)는 4e 와 함께 보류**.
 
 #### Phase 6f — 정리/통일 ⬜
 - 기존 `/api/agent/chat|plan|loop|clarify`·`/api/rag/chat` deprecated 표기, RAG 단일화 마무리, 문서/Swagger 정리. (구 엔드포인트 제거는 신규 검증 후 별도 결정)
