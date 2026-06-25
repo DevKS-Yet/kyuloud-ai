@@ -13,15 +13,25 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
- * Phase 6c — RESEARCH 경로: Orchestrator-workers(순차).
+ * Phase 6c~6d — RESEARCH 경로: Orchestrator-workers(독립 작업 병렬 + 의존 작업 순차).
  *
  * <p>Anthropic "Building Effective Agents" 의 Orchestrator-workers 패턴을 워크플로로 구현한다:
- * 중앙 LLM(orchestrator)이 다단계 질문을 조사 가능한 워커 하위작업으로 <b>동적 분해</b>한 뒤, 각 워커를
- * <b>순차</b> 실행한다. 각 워커는 리서처 페르소나로 도구를 써서 자기 목표에 대한 <em>근거만</em> 보고하고,
- * 누적된 근거를 마지막에 하나의 답변으로 <b>합성</b>한다.
+ * 중앙 LLM(orchestrator)이 다단계 질문을 조사 가능한 워커 하위작업으로 <b>동적 분해</b>한 뒤, 각 워커가
+ * 리서처 페르소나로 도구를 써서 자기 목표에 대한 <em>근거만</em> 보고하고, 누적된 근거를 마지막에 하나의
+ * 답변으로 <b>합성</b>한다.
+ *
+ * <p><b>병렬화(6d)</b>: 서로 독립인 워커({@code dependsOnPrevious=false})는 가상스레드로 동시에 실행해 지연을
+ * 줄이고, 앞선 결과에 의존하는 워커는 배리어로 그 전까지를 모두 마친 뒤 순차 실행한다. 같은 요청의 워커들은
+ * 하나의 {@link CallTracer}(내부 {@code CopyOnWriteArrayList})를 공유하므로 병렬 도구추적이 안전하다
+ * (6a 에서 PoC 검증한 메커니즘). {@code spring.threads.virtual.enabled=true} 전제.
  *
  * <p>역할별로 클라이언트를 나눈다(약한 로컬 모델의 판단 부담 최소화):
  * <ul>
@@ -29,8 +39,8 @@ import java.util.List;
  *   <li>워커 실행 — 도구를 갖춘 {@code workerChatClient}. DIRECT 와 같은 도구셋 + 요청별 {@link CallTracer}.</li>
  * </ul>
  *
- * <p>정지조건(#4): {@link Budget} 이 소진되면 남은 워커 투입을 멈추고 지금까지의 근거로 best-effort 합성한다
- * (단, 최소 1개 워커는 반드시 수행해 빈 근거 합성을 피한다). 6d 에서 독립 워커를 병렬화한다.
+ * <p>정지조건(#4): {@link Budget} 이 소진되면 남은 워커 배치 투입을 멈추고 지금까지의 근거로 best-effort
+ * 합성한다(단, 최소 1개 배치는 반드시 수행해 빈 근거 합성을 피한다).
  */
 @Slf4j
 @Service
@@ -67,8 +77,12 @@ public class OrchestratorService {
     }
 
     /**
-     * RESEARCH 경로 전체. 질문을 워커 하위작업으로 분해 → 순차 실행해 {@link AgentContext#addEvidence 근거 누적}
-     * → 합성해 최종 답변을 만든다. 분해/워커/합성 각 LLM 호출은 {@code ctx.budget()} 로 정지조건을 따른다.
+     * RESEARCH 경로 전체. 질문을 워커 하위작업으로 분해 → 독립 작업은 병렬·의존 작업은 순차로 실행해
+     * {@link AgentContext#addEvidence 근거 누적} → 합성해 최종 답변을 만든다.
+     *
+     * <p>order 순으로 훑으며 연속된 독립 작업({@code dependsOnPrevious=false})을 한 배치로 모아 병렬 실행하고,
+     * 의존 작업({@code true})을 만나면 그 전까지의 배치를 먼저 모두 마친 뒤(배리어) 그 작업을 단독 수행한다.
+     * 분해/워커/합성 각 LLM 호출은 {@code ctx.budget()} 로 정지조건을 따른다(배치 단위로 게이팅, #4).
      *
      * @param ctx      요청 컨텍스트(budget·tracer·evidence 공유)
      * @param question 원본 사용자 질문
@@ -81,19 +95,73 @@ public class OrchestratorService {
         List<WorkerTask> tasks = plan.tasks();
         log.debug("orchestrator: {}개 워커 하위작업으로 분해", tasks.size());
 
+        List<WorkerTask> independentBatch = new ArrayList<>();
         for (WorkerTask task : tasks) {
-            // 최소 1개 워커는 보장하고(빈 근거 합성 방지), 이후로는 예산 소진 시 중단해 best-effort 로 합성(#4).
-            if (!ctx.evidence().isEmpty() && ctx.budget().isExhausted()) {
-                log.warn("orchestrator: 예산 소진 → 남은 워커 {}개 중단, 지금까지 근거 {}개로 합성",
-                        tasks.size() - ctx.evidence().size(), ctx.evidence().size());
-                break;
+            if (task.dependsOnPrevious()) {
+                // 배리어: 지금까지 모은 독립 작업들을 먼저 병렬로 마친 뒤, 의존 작업을 단독 수행한다.
+                runBatch(ctx, independentBatch, mcp);
+                independentBatch.clear();
+                runBatch(ctx, List.of(task), mcp);
+            } else {
+                independentBatch.add(task);
             }
-            accountLlmCall(ctx, "worker-" + task.order());
-            StepResult evidence = runWorker(ctx, task, mcp);
-            ctx.addEvidence(evidence);
         }
+        runBatch(ctx, independentBatch, mcp);   // 남은 독립 작업 병렬 실행
 
         return synthesize(ctx, question);
+    }
+
+    /**
+     * 한 배치를 실행한다 — 1개면 그대로, 여러 개면 가상스레드로 병렬 실행해 근거를 누적한다. 빈 배치는 건너뛴다.
+     *
+     * <p>정지조건(#4): 이미 근거가 하나라도 있고 예산이 소진됐으면 이 배치를 통째로 건너뛰어 best-effort 로
+     * 합성으로 넘어간다(최소 1개 배치는 보장 — 첫 배치는 evidence 가 비어 있어 항상 수행). 정밀한 워커당 차단이
+     * 아니라 배치 경계에서 게이팅하므로, 병렬 배치 안의 워커들은 함께 수행된다.
+     */
+    private void runBatch(AgentContext ctx, List<WorkerTask> batch, ToolCallback[] mcp) {
+        if (batch.isEmpty()) {
+            return;
+        }
+        if (!ctx.evidence().isEmpty() && ctx.budget().isExhausted()) {
+            log.warn("orchestrator: 예산 소진 → 워커 배치 {}개 건너뜀, 지금까지 근거 {}개로 합성",
+                    batch.size(), ctx.evidence().size());
+            return;
+        }
+        if (batch.size() == 1) {
+            WorkerTask task = batch.get(0);
+            accountLlmCall(ctx, "worker-" + task.order());
+            ctx.addEvidence(runWorker(ctx, task, mcp));
+            return;
+        }
+        runParallel(ctx, batch, mcp);
+    }
+
+    /**
+     * 독립 워커들을 가상스레드로 동시에 실행한다. 제출 순서(=order)대로 결과를 거둬 근거에 누적하므로 순서가
+     * 보존된다. 개별 워커가 실패하면 그 근거만 건너뛰고 나머지는 합성에 쓴다(best-effort). 같은 {@link CallTracer}
+     * 를 공유하지만 내부가 {@code CopyOnWriteArrayList} 라 병렬 도구추적이 안전하다.
+     */
+    private void runParallel(AgentContext ctx, List<WorkerTask> batch, ToolCallback[] mcp) {
+        log.debug("orchestrator: 독립 워커 {}개 병렬 실행", batch.size());
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<StepResult>> futures = new ArrayList<>(batch.size());
+            for (WorkerTask task : batch) {
+                accountLlmCall(ctx, "worker-" + task.order());
+                futures.add(executor.submit(() -> runWorker(ctx, task, mcp)));
+            }
+            for (Future<StepResult> future : futures) {
+                try {
+                    ctx.addEvidence(future.get());
+                } catch (ExecutionException e) {
+                    log.warn("orchestrator: 병렬 워커 실패 → 해당 근거 생략: {}",
+                            e.getCause() != null ? e.getCause().getMessage() : e.getMessage());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("orchestrator: 병렬 워커 대기 중 인터럽트 → 남은 근거 생략");
+                    break;
+                }
+            }
+        }
     }
 
     /**
@@ -171,7 +239,7 @@ public class OrchestratorService {
     }
 
     private WorkerPlan singleTaskFallback(String question) {
-        return new WorkerPlan(List.of(new WorkerTask(1, question)));
+        return new WorkerPlan(List.of(new WorkerTask(1, question, false)));
     }
 
     /**

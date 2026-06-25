@@ -463,9 +463,10 @@ spring:
 - **완료 기준**: 다단계 질문이 RESEARCH 로 분기해 여러 워커 근거를 종합 답변.
 - **구현 메모**: 신규 `OrchestratorService` + `WorkerPlan`/`WorkerTask`(구조화 출력) + 프롬프트 `system-orchestrator.st`(분해)·`system-worker.st`(리서처 페르소나, 근거만 보고). 역할별 클라이언트 분리 — 분해·합성은 도구 없는 reasoner(`plannerChatClient` 재사용)로 추론만, 워커 실행은 `workerChatClient`+DIRECT 동일 도구셋+요청별 `CallTracer`(ToolContext). 합성 프롬프트는 `system-synthesis.st` 재사용(폐기 예정 `PlannerService` 엔 의존 안 함 — 오케스트레이션은 클린 재구현). 워커는 목표별 RAG 1회 검색 컨텍스트 동봉. **정지조건(#4)**: 워커 루프가 `Budget.isExhausted()` 로 남은 워커 투입 차단(단 최소 1워커 보장 → 빈 근거 합성 방지), 합성은 소진돼도 best-effort 1회. 분해 실패/빈 계획은 단일 워커(원 질문) 폴백. MCP 도구는 `UnifiedAgentService` 의 단일 해석 지점에서 받아 워커에 전달(중복 해석 방지). 응답에 `evidence`(워커별 순서·목표·결과) 필드 추가 — `PlanResponse` 동형 투명성, DIRECT/CLARIFY 에선 빈 목록. **6d 병렬화 선행조건(CallTracer 격리)은 6a PoC 로 충족**. **단위테스트(#8)는 4e 와 함께 보류**.
 
-#### Phase 6d — 워커 병렬화 ⬜
+#### Phase 6d — 워커 병렬화 ✅(코드, 실호출 검증 대기)
 - 독립 하위작업을 가상스레드(`spring.threads.virtual.enabled=true`)로 **병렬** 실행. 수집형 tracer 로 병렬 도구추적 안전성 확보. 의존 관계 있는 작업은 순차 유지.
 - **완료 기준**: 독립 워커 병렬 실행으로 지연 단축, 도구추적 정확.
+- **구현 메모**: `WorkerTask` 에 `dependsOnPrevious` 플래그 추가(분해 시 모델이 의존성 표시; 불확실하면 false 권장 — 프롬프트 명시). `OrchestratorService.research` 가 order 순으로 훑으며 연속된 독립 작업(false)을 한 배치로 모아 `Executors.newVirtualThreadPerTaskExecutor()`(try-with-resources)로 **병렬** 실행하고, 의존 작업(true)을 만나면 직전 배치를 모두 마친 뒤(배리어) 단독 수행. 결과는 `Future` 를 제출 순서(=order)로 거둬 근거 순서 보존, 개별 워커 실패는 해당 근거만 생략(best-effort). 같은 요청 워커들이 하나의 `CallTracer`(내부 `CopyOnWriteArrayList`) 공유 → 병렬 도구추적 안전(6a PoC 메커니즘 실사용). budget 정지조건은 **배치 경계**에서 게이팅(워커당 정밀 차단 아님, 최소 1배치 보장). 명시적 가상스레드 executor 라 `spring.threads.virtual.enabled` 와 무관하게 동작(설정은 이미 켜져 있음). **단위테스트(#8)는 4e 와 함께 보류**.
 
 #### Phase 6e — Evaluator-optimizer 통합 ⬜
 - orchestrator 결과를 충분성 평가로 감싸 부족하면(missing) 워커를 추가 투입(보강 루프). budget 상한 내에서 반복.
