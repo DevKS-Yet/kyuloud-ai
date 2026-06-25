@@ -3,6 +3,7 @@ package com.kyuloud.ai.agent.unified;
 import com.kyuloud.ai.agent.clarify.ClarificationService;
 import com.kyuloud.ai.agent.clarify.ClarificationVerdict;
 import com.kyuloud.ai.agent.dto.ClarifyingQuestion;
+import com.kyuloud.ai.agent.dto.StepResult;
 import com.kyuloud.ai.agent.tool.DateTimeTool;
 import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
 import com.kyuloud.ai.agent.tool.WebSearchTool;
@@ -33,8 +34,9 @@ import java.util.List;
  * 중간 산출물은 임시 conversationId 에 적재했다 지우지 않고 {@link AgentContext}(코드)가 보유하며,
  * 도구 추적은 {@link CallTracer}(수집형, {@code ToolContext} 주입)로 병렬·스트리밍에서도 안전하게 한다.
  *
- * <p><b>범위</b>: 6a — DIRECT 경로, 6b — CLARIFY 분기. Router 가 RESEARCH 로 분류하면 아직 DIRECT 로
- * 폴백한다(RESEARCH 는 6c~ 에서 채운다). 분류 결과(routed)와 실제 수행(executed)을 응답에 함께 노출한다.
+ * <p><b>범위</b>: 6a — DIRECT 경로, 6b — CLARIFY 분기, 6c — RESEARCH(Orchestrator-workers 순차)를
+ * {@link OrchestratorService} 에 위임. 분류 결과(routed)와 실제 수행(executed)을 응답에 함께 노출한다
+ * (CLARIFY 과민 시 DIRECT 로 폴백하므로 둘이 다를 수 있다).
  */
 @Slf4j
 @Service
@@ -44,6 +46,7 @@ public class UnifiedAgentService {
 
     private final RouterService routerService;
     private final ClarificationService clarificationService;
+    private final OrchestratorService orchestratorService;
     private final KnowledgeRetriever knowledgeRetriever;
     private final ChatClient workerChatClient;
     private final ChatMemory chatMemory;
@@ -61,6 +64,7 @@ public class UnifiedAgentService {
 
     public UnifiedAgentService(RouterService routerService,
                                ClarificationService clarificationService,
+                               OrchestratorService orchestratorService,
                                KnowledgeRetriever knowledgeRetriever,
                                @Qualifier("workerChatClient") ChatClient workerChatClient,
                                ChatMemory chatMemory,
@@ -71,6 +75,7 @@ public class UnifiedAgentService {
                                ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider) {
         this.routerService = routerService;
         this.clarificationService = clarificationService;
+        this.orchestratorService = orchestratorService;
         this.knowledgeRetriever = knowledgeRetriever;
         this.workerChatClient = workerChatClient;
         this.chatMemory = chatMemory;
@@ -97,7 +102,7 @@ public class UnifiedAgentService {
         RouteDecision decision = routeWithBudget(ctx, message, context);
 
         // CLARIFY 분기(6b): Router 가 CLARIFY 면 명확화 전문가로 되묻기를 생성한다. 전문가가 되물을 게 없다고
-        // 판단하면(Router 과민) DIRECT 로 진행한다. RESEARCH 는 아직 DIRECT 로 폴백(6c~).
+        // 판단하면(Router 과민) DIRECT 로 진행한다.
         if (decision.strategy() == RouteStrategy.CLARIFY) {
             UnifiedAgentResponse clarify = tryClarify(ctx, cid, message, context);
             if (clarify != null) {
@@ -105,14 +110,24 @@ public class UnifiedAgentService {
             }
         }
 
-        RouteStrategy executed = RouteStrategy.DIRECT;
-        String reply = direct(ctx, history, message);
+        // RESEARCH 분기(6c): 다단계 질문은 Orchestrator 가 워커 하위작업으로 분해→순차 실행→근거 누적→합성.
+        // 그 외(또는 CLARIFY 과민 폴백)는 DIRECT 단발 답변.
+        RouteStrategy executed;
+        String reply;
+        if (decision.strategy() == RouteStrategy.RESEARCH) {
+            executed = RouteStrategy.RESEARCH;
+            reply = orchestratorService.research(ctx, message, context, mcpToolCallbacks());
+        } else {
+            executed = RouteStrategy.DIRECT;
+            reply = direct(ctx, history, message);
+        }
 
         recordTurn(cid, message, reply);
-        log.debug("unified agent done: routed={}, executed={}, llmCalls={}, tools={}",
-                decision.strategy(), executed, ctx.budget().usedLlmCalls(), ctx.tracer().getCalledTools());
+        log.debug("unified agent done: routed={}, executed={}, llmCalls={}, evidence={}, tools={}",
+                decision.strategy(), executed, ctx.budget().usedLlmCalls(),
+                ctx.evidence().size(), ctx.tracer().getCalledTools());
         return new UnifiedAgentResponse(message, decision.strategy(), executed, reply,
-                List.of(), ctx.tracer().getCalledTools());
+                List.of(), ctx.evidence(), ctx.tracer().getCalledTools());
     }
 
     /**
@@ -137,7 +152,7 @@ public class UnifiedAgentService {
         recordTurn(cid, message, rendered);
         log.debug("unified agent done: routed=CLARIFY, executed=CLARIFY, questions={}", questions.size());
         return new UnifiedAgentResponse(message, RouteStrategy.CLARIFY, RouteStrategy.CLARIFY,
-                rendered, questions, ctx.tracer().getCalledTools());
+                rendered, questions, List.of(), ctx.tracer().getCalledTools());
     }
 
     /** 되묻는 질문 목록을 사람이 읽을 수 있는 텍스트로 렌더링한다(응답 reply + 메모리 기록용). */

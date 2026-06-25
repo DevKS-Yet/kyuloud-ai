@@ -458,9 +458,10 @@ spring:
 - **완료 기준**: 모호한 질문 → 되묻기 후 재호출 시 맥락 유지, 명확한 질문 → 해당 전략으로 진행.
 - **구현 메모**: `UnifiedAgentService.tryClarify` — CLARIFY 생성은 5b 의 `ClarificationService`(전문가)를 **재사용**(중복 재구현 안 함; `plannerChatClient` 라 Guardrail/Logging/Metrics 이미 적용). Router(거친 게이트)가 CLARIFY 라도 전문가가 되물을 게 없으면 `null` 반환 → **DIRECT 폴백**(Router 과민 흡수). 되물을 게 있으면 `recordTurn(원질문 → 렌더링된 되묻기)` 으로 한 턴 기록(연속성). 응답에 `clarification`(구조화 질문+선택지) 필드 추가, `reply` 는 사람이 읽는 렌더링 텍스트. budget 에 clarify LLM 호출 1회 반영.
 
-#### Phase 6c — RESEARCH: Orchestrator-workers (순차) ⬜
+#### Phase 6c — RESEARCH: Orchestrator-workers (순차) ✅(코드, 실호출 검증 대기)
 - `OrchestratorService` — 중앙 LLM 이 질문을 워커 하위작업으로 **동적 분해** → 각 워커(리서처 페르소나, 도구 사용, 근거만 보고)를 **순차** 실행 → `AgentContext.evidence` 누적 → `synthesize`.
 - **완료 기준**: 다단계 질문이 RESEARCH 로 분기해 여러 워커 근거를 종합 답변.
+- **구현 메모**: 신규 `OrchestratorService` + `WorkerPlan`/`WorkerTask`(구조화 출력) + 프롬프트 `system-orchestrator.st`(분해)·`system-worker.st`(리서처 페르소나, 근거만 보고). 역할별 클라이언트 분리 — 분해·합성은 도구 없는 reasoner(`plannerChatClient` 재사용)로 추론만, 워커 실행은 `workerChatClient`+DIRECT 동일 도구셋+요청별 `CallTracer`(ToolContext). 합성 프롬프트는 `system-synthesis.st` 재사용(폐기 예정 `PlannerService` 엔 의존 안 함 — 오케스트레이션은 클린 재구현). 워커는 목표별 RAG 1회 검색 컨텍스트 동봉. **정지조건(#4)**: 워커 루프가 `Budget.isExhausted()` 로 남은 워커 투입 차단(단 최소 1워커 보장 → 빈 근거 합성 방지), 합성은 소진돼도 best-effort 1회. 분해 실패/빈 계획은 단일 워커(원 질문) 폴백. MCP 도구는 `UnifiedAgentService` 의 단일 해석 지점에서 받아 워커에 전달(중복 해석 방지). 응답에 `evidence`(워커별 순서·목표·결과) 필드 추가 — `PlanResponse` 동형 투명성, DIRECT/CLARIFY 에선 빈 목록. **6d 병렬화 선행조건(CallTracer 격리)은 6a PoC 로 충족**. **단위테스트(#8)는 4e 와 함께 보류**.
 
 #### Phase 6d — 워커 병렬화 ⬜
 - 독립 하위작업을 가상스레드(`spring.threads.virtual.enabled=true`)로 **병렬** 실행. 수집형 tracer 로 병렬 도구추적 안전성 확보. 의존 관계 있는 작업은 순차 유지.
