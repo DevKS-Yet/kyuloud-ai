@@ -13,10 +13,8 @@ import com.kyuloud.ai.agent.eval.EvaluationVerdict;
 import com.kyuloud.ai.agent.eval.EvaluatorService;
 import com.kyuloud.ai.agent.planner.Plan;
 import com.kyuloud.ai.agent.planner.PlannerService;
-import com.kyuloud.ai.agent.tool.DateTimeTool;
-import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
 import com.kyuloud.ai.agent.tool.RagSearchTool;
-import com.kyuloud.ai.agent.tool.WebSearchTool;
+import com.kyuloud.ai.agent.tool.ToolProvider;
 import com.kyuloud.ai.config.AgentLoopProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -25,9 +23,6 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
@@ -47,9 +42,8 @@ import java.util.UUID;
  * 주입한다(전역 {@code defaultTools}를 쓰지 않아 chat/rag 경로에는 영향을 주지 않음).
  * tool-calling 의 ReAct 루프(추론→도구호출→관찰→반복)는 Spring AI 가 자동 처리한다.
  *
- * <p>Phase 3d-3: {@link SyncMcpToolCallbackProvider} 를 {@link ObjectProvider} 로 주입해
- * {@code spring.ai.mcp.client.enabled=false} 이거나 IntelliJ 가 미실행 상태일 때도
- * 앱이 정상 기동된다. MCP 연결이 있을 때만 IDE 도구가 활성화된다.
+ * <p>도구 주입은 {@link ToolProvider} 한 곳으로 모았다 — 공용 도구({@code @Tool} 빈)와 MCP 도구를 합쳐주며,
+ * MCP 미설정/연결 실패는 graceful degrade 된다. RAG 검색 도구만 이 (구) 경로 전용이라 별도로 함께 넘긴다.
  */
 @Slf4j
 @Service
@@ -58,26 +52,14 @@ public class AgentService {
     private static final String DEFAULT_CONVERSATION_ID = "default";
 
     private final ChatClient chatClient;
-    private final DateTimeTool dateTimeTool;
+    private final ToolProvider toolProvider;
     private final RagSearchTool ragSearchTool;
-    private final DocumentCatalogTool documentCatalogTool;
-    private final WebSearchTool webSearchTool;
     private final ToolCallTracker toolCallTracker;
     private final PlannerService plannerService;
     private final EvaluatorService evaluatorService;
     private final ClarificationService clarificationService;
     private final AgentLoopProperties loopProperties;
     private final ChatMemory chatMemory;
-
-    /**
-     * MCP 도구 공급자(optional). 생성자에서 즉시 해석하지 않고 {@link ObjectProvider} 로 보관해,
-     * MCP 미설정/연결 실패가 {@code AgentService} 빈 생성을 깨뜨리지 않게 한다.
-     */
-    private final ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider;
-
-    /** 최초 1회 lazy 해석한 MCP 도구 캐시(해석 실패 시 빈 배열). */
-    private volatile ToolCallback[] mcpToolCallbacks;
-    private volatile boolean mcpResolved;
 
     @Value("classpath:prompts/system-agent.st")
     private Resource agentSystemPrompt;
@@ -87,56 +69,23 @@ public class AgentService {
     private Resource loopActionSystemPrompt;
 
     public AgentService(ChatClient chatClient,
-                        DateTimeTool dateTimeTool,
+                        ToolProvider toolProvider,
                         RagSearchTool ragSearchTool,
-                        DocumentCatalogTool documentCatalogTool,
-                        WebSearchTool webSearchTool,
                         ToolCallTracker toolCallTracker,
                         PlannerService plannerService,
                         EvaluatorService evaluatorService,
                         ClarificationService clarificationService,
                         AgentLoopProperties loopProperties,
-                        ChatMemory chatMemory,
-                        ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider) {
+                        ChatMemory chatMemory) {
         this.chatClient = chatClient;
-        this.dateTimeTool = dateTimeTool;
+        this.toolProvider = toolProvider;
         this.ragSearchTool = ragSearchTool;
-        this.documentCatalogTool = documentCatalogTool;
-        this.webSearchTool = webSearchTool;
         this.toolCallTracker = toolCallTracker;
         this.plannerService = plannerService;
         this.evaluatorService = evaluatorService;
         this.clarificationService = clarificationService;
         this.loopProperties = loopProperties;
         this.chatMemory = chatMemory;
-        this.mcpProvider = mcpProvider;
-    }
-
-    /**
-     * MCP 도구를 lazy 하게 1회 해석한다. MCP 가 비활성(빈 없음)이거나 연결/조회에 실패하면
-     * 빈 배열을 반환하고 캐시해, 이후 요청과 앱 기동에 영향을 주지 않는다(graceful degrade).
-     */
-    private ToolCallback[] mcpToolCallbacks() {
-        if (mcpResolved) {
-            return mcpToolCallbacks;
-        }
-        synchronized (this) {
-            if (!mcpResolved) {
-                ToolCallback[] resolved = new ToolCallback[0];
-                try {
-                    SyncMcpToolCallbackProvider provider = mcpProvider.getIfAvailable();
-                    if (provider != null) {
-                        resolved = provider.getToolCallbacks();
-                        log.info("MCP 도구 {}개 로드됨", resolved.length);
-                    }
-                } catch (Exception e) {
-                    log.warn("MCP 도구 로드 실패 — MCP 없이 진행합니다: {}", e.getMessage());
-                }
-                this.mcpToolCallbacks = resolved;
-                this.mcpResolved = true;
-            }
-        }
-        return mcpToolCallbacks;
     }
 
     public AgentResponse chat(String conversationId, String message) {
@@ -304,16 +253,13 @@ public class AgentService {
      * 호출 경로별 페르소나를 바꾼다(예: loop 는 리서처 프롬프트). MCP 도구는 연결이 있을 때만 추가된다.
      */
     private ChatClient.ChatClientRequestSpec agentSpec(Resource systemPrompt, String cid, String userMessage) {
-        ToolCallback[] mcp = mcpToolCallbacks();
-        var spec = chatClient.prompt()
+        // 공용 도구 + MCP 는 ToolProvider 가 한데 모아준다. RagSearchTool 은 이 (구) 경로 전용이라 추가로 넘긴다
+        // (통합 흐름은 RAG 를 도구로 노출하지 않고 KnowledgeRetriever 로 직접 검색해 단일화함, #1=c).
+        return chatClient.prompt()
                 .system(systemPrompt)
                 .user(userMessage)
-                .tools(dateTimeTool, ragSearchTool, documentCatalogTool, webSearchTool)
+                .tools(toolProvider.tools(ragSearchTool))
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid));
-        if (mcp.length > 0) {
-            spec = spec.tools((Object[]) mcp);
-        }
-        return spec;
     }
 
     /**

@@ -24,7 +24,7 @@ import java.util.stream.IntStream;
  */
 @Slf4j
 @Component
-public class WebSearchTool {
+public class WebSearchTool implements AgentTool {
 
     private final RestClient restClient;
     private final SearchProperties searchProperties;

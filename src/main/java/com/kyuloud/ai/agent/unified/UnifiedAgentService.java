@@ -3,10 +3,7 @@ package com.kyuloud.ai.agent.unified;
 import com.kyuloud.ai.agent.clarify.ClarificationService;
 import com.kyuloud.ai.agent.clarify.ClarificationVerdict;
 import com.kyuloud.ai.agent.dto.ClarifyingQuestion;
-import com.kyuloud.ai.agent.dto.StepResult;
-import com.kyuloud.ai.agent.tool.DateTimeTool;
-import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
-import com.kyuloud.ai.agent.tool.WebSearchTool;
+import com.kyuloud.ai.agent.tool.ToolProvider;
 import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -15,9 +12,6 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -51,13 +45,7 @@ public class UnifiedAgentService {
     private final ChatClient workerChatClient;
     private final ChatMemory chatMemory;
     private final AgentBudgetProperties budgetProperties;
-    private final DateTimeTool dateTimeTool;
-    private final WebSearchTool webSearchTool;
-    private final DocumentCatalogTool documentCatalogTool;
-    private final ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider;
-
-    private volatile ToolCallback[] mcpToolCallbacks;
-    private volatile boolean mcpResolved;
+    private final ToolProvider toolProvider;
 
     @Value("classpath:prompts/system-direct.st")
     private Resource directSystemPrompt;
@@ -69,10 +57,7 @@ public class UnifiedAgentService {
                                @Qualifier("workerChatClient") ChatClient workerChatClient,
                                ChatMemory chatMemory,
                                AgentBudgetProperties budgetProperties,
-                               DateTimeTool dateTimeTool,
-                               WebSearchTool webSearchTool,
-                               DocumentCatalogTool documentCatalogTool,
-                               ObjectProvider<SyncMcpToolCallbackProvider> mcpProvider) {
+                               ToolProvider toolProvider) {
         this.routerService = routerService;
         this.clarificationService = clarificationService;
         this.orchestratorService = orchestratorService;
@@ -80,10 +65,7 @@ public class UnifiedAgentService {
         this.workerChatClient = workerChatClient;
         this.chatMemory = chatMemory;
         this.budgetProperties = budgetProperties;
-        this.dateTimeTool = dateTimeTool;
-        this.webSearchTool = webSearchTool;
-        this.documentCatalogTool = documentCatalogTool;
-        this.mcpProvider = mcpProvider;
+        this.toolProvider = toolProvider;
     }
 
     /**
@@ -116,7 +98,7 @@ public class UnifiedAgentService {
         String reply;
         if (decision.strategy() == RouteStrategy.RESEARCH) {
             executed = RouteStrategy.RESEARCH;
-            reply = orchestratorService.research(ctx, message, context, mcpToolCallbacks());
+            reply = orchestratorService.research(ctx, message, context);
         } else {
             executed = RouteStrategy.DIRECT;
             reply = direct(ctx, history, message);
@@ -186,17 +168,14 @@ public class UnifiedAgentService {
                 : message;
 
         accountLlmCall(ctx, "direct");
-        ToolCallback[] mcp = mcpToolCallbacks();
-        var spec = workerChatClient.prompt()
+        return workerChatClient.prompt()
                 .system(directSystemPrompt)
                 .messages(history)
                 .user(userMessage)
-                .tools(dateTimeTool, webSearchTool, documentCatalogTool)
-                .toolContext(ctx.tracer().asToolContext());
-        if (mcp.length > 0) {
-            spec = spec.tools((Object[]) mcp);
-        }
-        return spec.call().content();
+                .tools(toolProvider.tools())
+                .toolContext(ctx.tracer().asToolContext())
+                .call()
+                .content();
     }
 
     /**
@@ -234,32 +213,5 @@ public class UnifiedAgentService {
             case SYSTEM -> "시스템";
             default -> type.getValue();
         };
-    }
-
-    /**
-     * MCP 도구를 lazy 하게 1회 해석한다(graceful degrade). MCP 가 비활성이거나 연결/조회 실패면 빈 배열을 캐시해
-     * 이후 요청·앱 기동에 영향을 주지 않는다.
-     */
-    private ToolCallback[] mcpToolCallbacks() {
-        if (mcpResolved) {
-            return mcpToolCallbacks;
-        }
-        synchronized (this) {
-            if (!mcpResolved) {
-                ToolCallback[] resolved = new ToolCallback[0];
-                try {
-                    SyncMcpToolCallbackProvider provider = mcpProvider.getIfAvailable();
-                    if (provider != null) {
-                        resolved = provider.getToolCallbacks();
-                        log.info("unified agent: MCP 도구 {}개 로드됨", resolved.length);
-                    }
-                } catch (Exception e) {
-                    log.warn("unified agent: MCP 도구 로드 실패 — MCP 없이 진행합니다: {}", e.getMessage());
-                }
-                this.mcpToolCallbacks = resolved;
-                this.mcpResolved = true;
-            }
-        }
-        return mcpToolCallbacks;
     }
 }

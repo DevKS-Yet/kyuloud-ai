@@ -3,13 +3,10 @@ package com.kyuloud.ai.agent.unified;
 import com.kyuloud.ai.agent.dto.StepResult;
 import com.kyuloud.ai.agent.eval.EvaluationVerdict;
 import com.kyuloud.ai.agent.eval.EvaluatorService;
-import com.kyuloud.ai.agent.tool.DateTimeTool;
-import com.kyuloud.ai.agent.tool.DocumentCatalogTool;
-import com.kyuloud.ai.agent.tool.WebSearchTool;
+import com.kyuloud.ai.agent.tool.ToolProvider;
 import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -58,9 +55,7 @@ public class OrchestratorService {
     private final EvaluatorService evaluatorService;
     private final KnowledgeRetriever knowledgeRetriever;
     private final AgentBudgetProperties budgetProperties;
-    private final DateTimeTool dateTimeTool;
-    private final WebSearchTool webSearchTool;
-    private final DocumentCatalogTool documentCatalogTool;
+    private final ToolProvider toolProvider;
 
     @Value("classpath:prompts/system-orchestrator.st")
     private Resource orchestratorSystemPrompt;
@@ -76,17 +71,13 @@ public class OrchestratorService {
                                EvaluatorService evaluatorService,
                                KnowledgeRetriever knowledgeRetriever,
                                AgentBudgetProperties budgetProperties,
-                               DateTimeTool dateTimeTool,
-                               WebSearchTool webSearchTool,
-                               DocumentCatalogTool documentCatalogTool) {
+                               ToolProvider toolProvider) {
         this.reasonerChatClient = reasonerChatClient;
         this.workerChatClient = workerChatClient;
         this.evaluatorService = evaluatorService;
         this.knowledgeRetriever = knowledgeRetriever;
         this.budgetProperties = budgetProperties;
-        this.dateTimeTool = dateTimeTool;
-        this.webSearchTool = webSearchTool;
-        this.documentCatalogTool = documentCatalogTool;
+        this.toolProvider = toolProvider;
     }
 
     /**
@@ -101,10 +92,9 @@ public class OrchestratorService {
      * @param ctx      요청 컨텍스트(budget·tracer·evidence 공유)
      * @param question 원본 사용자 질문
      * @param context  대화 맥락 텍스트(분해 시 이미 아는 정보 재조사 방지)
-     * @param mcp      외부 MCP 도구 콜백(없으면 빈 배열). 워커에게 DIRECT 와 동일 도구셋을 주기 위해 받는다.
      * @return 누적 근거를 종합한 최종 답변
      */
-    public String research(AgentContext ctx, String question, String context, ToolCallback[] mcp) {
+    public String research(AgentContext ctx, String question, String context) {
         WorkerPlan plan = decompose(ctx, question, context);
         List<WorkerTask> tasks = plan.tasks();
         log.debug("orchestrator: {}개 워커 하위작업으로 분해", tasks.size());
@@ -113,16 +103,16 @@ public class OrchestratorService {
         for (WorkerTask task : tasks) {
             if (task.dependsOnPrevious()) {
                 // 배리어: 지금까지 모은 독립 작업들을 먼저 병렬로 마친 뒤, 의존 작업을 단독 수행한다.
-                runBatch(ctx, independentBatch, mcp);
+                runBatch(ctx, independentBatch);
                 independentBatch.clear();
-                runBatch(ctx, List.of(task), mcp);
+                runBatch(ctx, List.of(task));
             } else {
                 independentBatch.add(task);
             }
         }
-        runBatch(ctx, independentBatch, mcp);   // 남은 독립 작업 병렬 실행
+        runBatch(ctx, independentBatch);   // 남은 독립 작업 병렬 실행
 
-        reinforce(ctx, question, mcp);          // 6e — 충분성 평가→부족하면 보강 워커 추가
+        reinforce(ctx, question);          // 6e — 충분성 평가→부족하면 보강 워커 추가
 
         return synthesize(ctx, question);
     }
@@ -136,7 +126,7 @@ public class OrchestratorService {
      * 막는다: {@code maxReinforcements}(라운드 수)와 {@link Budget}(전체 LLM 호출·시간) — 둘 중 먼저 닿는
      * 쪽에서 멈춘다. 평가 실패는 {@link EvaluatorService} 가 "충분" 폴백을 주므로 루프가 안전하게 종료된다(#4).
      */
-    private void reinforce(AgentContext ctx, String question, ToolCallback[] mcp) {
+    private void reinforce(AgentContext ctx, String question) {
         int maxRounds = budgetProperties.getMaxReinforcements();
         for (int round = 1; round <= maxRounds; round++) {
             if (ctx.budget().isExhausted()) {
@@ -165,7 +155,7 @@ public class OrchestratorService {
             log.debug("orchestrator: 근거 부족(missing={}) → 보강 워커[{}] 투입: {}",
                     verdict.missing(), nextOrder, objective);
             accountLlmCall(ctx, "reinforce-worker-" + nextOrder);
-            ctx.addEvidence(runWorker(ctx, task, mcp));
+            ctx.addEvidence(runWorker(ctx, task));
         }
         log.debug("orchestrator: 보강 라운드 상한({}) 도달 → 합성", maxRounds);
     }
@@ -185,7 +175,7 @@ public class OrchestratorService {
      * 합성으로 넘어간다(최소 1개 배치는 보장 — 첫 배치는 evidence 가 비어 있어 항상 수행). 정밀한 워커당 차단이
      * 아니라 배치 경계에서 게이팅하므로, 병렬 배치 안의 워커들은 함께 수행된다.
      */
-    private void runBatch(AgentContext ctx, List<WorkerTask> batch, ToolCallback[] mcp) {
+    private void runBatch(AgentContext ctx, List<WorkerTask> batch) {
         if (batch.isEmpty()) {
             return;
         }
@@ -197,10 +187,10 @@ public class OrchestratorService {
         if (batch.size() == 1) {
             WorkerTask task = batch.get(0);
             accountLlmCall(ctx, "worker-" + task.order());
-            ctx.addEvidence(runWorker(ctx, task, mcp));
+            ctx.addEvidence(runWorker(ctx, task));
             return;
         }
-        runParallel(ctx, batch, mcp);
+        runParallel(ctx, batch);
     }
 
     /**
@@ -208,13 +198,13 @@ public class OrchestratorService {
      * 보존된다. 개별 워커가 실패하면 그 근거만 건너뛰고 나머지는 합성에 쓴다(best-effort). 같은 {@link CallTracer}
      * 를 공유하지만 내부가 {@code CopyOnWriteArrayList} 라 병렬 도구추적이 안전하다.
      */
-    private void runParallel(AgentContext ctx, List<WorkerTask> batch, ToolCallback[] mcp) {
+    private void runParallel(AgentContext ctx, List<WorkerTask> batch) {
         log.debug("orchestrator: 독립 워커 {}개 병렬 실행", batch.size());
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<StepResult>> futures = new ArrayList<>(batch.size());
             for (WorkerTask task : batch) {
                 accountLlmCall(ctx, "worker-" + task.order());
-                futures.add(executor.submit(() -> runWorker(ctx, task, mcp)));
+                futures.add(executor.submit(() -> runWorker(ctx, task)));
             }
             for (Future<StepResult> future : futures) {
                 try {
@@ -261,21 +251,19 @@ public class OrchestratorService {
      * 워커 1개를 실행한다 — 리서처 페르소나로 자기 조사 목표에 대한 근거만 보고한다. DIRECT 와 같은 도구셋과
      * 요청별 {@link CallTracer}({@code ToolContext})를 쓰고, 목표에 맞춰 항상 1회 문서 검색 컨텍스트를 곁들인다.
      */
-    private StepResult runWorker(AgentContext ctx, WorkerTask task, ToolCallback[] mcp) {
+    private StepResult runWorker(AgentContext ctx, WorkerTask task) {
         String docContext = knowledgeRetriever.retrieveContext(task.objective());
         String userMessage = StringUtils.hasText(docContext)
                 ? "참고 문서:\n" + docContext + "\n\n위 문서가 관련 있으면 근거로 삼고 출처를 밝히세요. 관련 없으면 무시하세요.\n\n조사 목표:\n" + task.objective()
                 : "조사 목표:\n" + task.objective();
 
-        var spec = workerChatClient.prompt()
+        String finding = workerChatClient.prompt()
                 .system(workerSystemPrompt)
                 .user(userMessage)
-                .tools(dateTimeTool, webSearchTool, documentCatalogTool)
-                .toolContext(ctx.tracer().asToolContext());
-        if (mcp.length > 0) {
-            spec = spec.tools((Object[]) mcp);
-        }
-        String finding = spec.call().content();
+                .tools(toolProvider.tools())
+                .toolContext(ctx.tracer().asToolContext())
+                .call()
+                .content();
         log.debug("orchestrator: 워커[{}] 완료 — {}", task.order(), task.objective());
         return new StepResult(task.order(), task.objective(), finding);
     }

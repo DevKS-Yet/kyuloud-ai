@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Component
-public class DocumentCatalogTool {
+public class DocumentCatalogTool implements AgentTool {
 
     private final DocumentMetadataRepository metadataRepository;
     private final ToolCallTracker toolCallTracker;

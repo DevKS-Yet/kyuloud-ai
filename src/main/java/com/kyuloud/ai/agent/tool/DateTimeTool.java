@@ -19,7 +19,7 @@ import java.time.format.DateTimeFormatter;
  */
 @Slf4j
 @Component
-public class DateTimeTool {
+public class DateTimeTool implements AgentTool {
 
     private static final DateTimeFormatter FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd(EEE) HH:mm:ss");
