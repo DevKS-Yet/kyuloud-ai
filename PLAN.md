@@ -492,9 +492,10 @@ spring:
 - **완료 기준**: 같은 질문을 모델 바꿔 호출 시 `executedModel` 과 답변이 달라지고, allow-list 밖 모델은 400, 미지정은 기본 모델로 동작.
 - **구현 메모**: Spring AI 2.0.0 `ChatClientRequestSpec.options(B extends ChatOptions.Builder<?>)` 는 **빌더**를 받음 → `OllamaChatOptions.builder().model(...)`(`.build()` 안 함) 전달. 옵션 클래스는 `org.springframework.ai.ollama.api.OllamaChatOptions`(2.0.0 명칭). 빈/캐시 추가 없이 기존 `workerChatClient` 에 per-request 오버라이드만(런타임 옵션의 null 필드는 ChatModel 기본옵션 유지 → temperature 등 기존값 보존). `ModelCatalog.resolve(model)`: 미지정→기본, allow-list 밖→`BusinessException(400, UNKNOWN_MODEL)`. 기본 모델은 목록에 없어도 항상 허용. CLARIFY 응답의 `executedModel` 은 기본 모델(명확화는 내부 역할이라 D4 미적용). 설정에 `kyuloud.ollama.*` 예시(gemma4:e4b 1개 + 주석 예시) 추가. **7b(on-unavailable 폴백·MetricsAdvisor model 태그) 및 단위테스트는 보류**.
 
-#### Phase 7b — 운영/관측 마무리 ⬜
+#### Phase 7b — 운영/관측 마무리 ✅(코드, 실호출 검증 대기)
 - `on-unavailable` 정책(미설치/로드 실패 시 기본 모델 폴백 vs 에러), `MetricsAdvisor` 에 `model` 태그(모델별 지연·토큰 비교).
 - **완료 기준**: 미설치 모델 요청이 정책대로 처리, 모델별 메트릭 분리 집계.
+- **구현 메모**: **미설치 처리** — `ModelCatalog.resolve` 가 allow-list 통과 후 `OllamaApi.listModels()`(설치 모델 목록)로 **preflight 확인**, 미설치면 `OllamaModelProperties.onUnavailable` 정책대로 처리(`DEFAULT`=기본 모델 폴백, `ERROR`=400 `MODEL_NOT_INSTALLED`). 조회 자체가 불가/실패면(Ollama 미자동구성·일시 장애) **확인 생략하고 그대로 진행**(graceful) — 요청을 막지 않음. 목록은 30초 TTL 캐시(`ObjectProvider<OllamaApi>` lazy, 실패 시 unverified). resolve 시점 단일 결정이라 `executedModel`(폴백 시 기본 모델)이 깔끔히 일관. 설정 `kyuloud.ollama.on-unavailable`(기본 default). **모델별 메트릭** — `MetricsAdvisor`(Phase 4b)가 이미 응답 메타데이터의 `model` 로 latency/tokens 를 태깅 → 7a 의 `.options(model)` per-request 오버라이드 덕에 **모델별 분리 집계가 자동 충족**(추가 코드 없음, 검증만). **단위테스트는 보류**.
 
 ---
 

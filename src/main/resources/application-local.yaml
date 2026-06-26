@@ -60,6 +60,8 @@ kyuloud:
   # 운영자가 ollama pull 로 미리 설치한 모델만 등록(자동 다운로드 안 함). VRAM 고려해 작게 유지.
   ollama:
     default-model: gemma4:e4b
+    # 미설치 모델 요청 시(7b): default=기본 모델 폴백 / error=400. 조회 불가하면 그대로 진행.
+    on-unavailable: default
     models:
       - name: gemma4:e4b
         display-name: "Gemma 4 (e4b, 기본)"

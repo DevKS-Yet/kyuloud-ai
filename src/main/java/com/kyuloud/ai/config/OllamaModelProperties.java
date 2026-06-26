@@ -28,6 +28,20 @@ public class OllamaModelProperties {
     /** 선택 가능한 모델 목록. */
     private List<ModelEntry> models = new ArrayList<>();
 
+    /**
+     * allow-list 엔 있으나 Ollama 에 실제로 설치되지 않은 모델을 요청했을 때의 처리(Phase 7b).
+     * 설치 여부는 {@code OllamaApi.listModels()} 로 확인하며, 확인 자체가 불가하면(목록 조회 실패) 그대로 진행한다.
+     */
+    private OnUnavailable onUnavailable = OnUnavailable.DEFAULT;
+
+    /** 미설치 모델 처리 정책. */
+    public enum OnUnavailable {
+        /** 기본 모델로 폴백(요청은 성공, 응답 executedModel 이 기본 모델로 표시됨). */
+        DEFAULT,
+        /** 400 으로 거부(MODEL_NOT_INSTALLED). */
+        ERROR
+    }
+
     /** 단일 모델 항목(이름 + 표시명). */
     @Getter
     @Setter
