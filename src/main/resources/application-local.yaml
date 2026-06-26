@@ -56,6 +56,18 @@ spring:
 
 # Phase 2b — RAG 검색 파라미터 (RagProperties 바인딩)
 kyuloud:
+  # Phase 7 — 사용자가 /api/agent 요청에서 고를 수 있는 로컬 Ollama 모델(allow-list).
+  # 운영자가 ollama pull 로 미리 설치한 모델만 등록(자동 다운로드 안 함). VRAM 고려해 작게 유지.
+  ollama:
+    default-model: gemma4:e4b
+    models:
+      - name: gemma4:e4b
+        display-name: "Gemma 4 (e4b, 기본)"
+      # 아래는 예시 — 실제 설치한 모델로 교체/추가하세요(ollama pull 필요).
+      # - name: qwen2.5:7b
+      #   display-name: "Qwen2.5 7B"
+      # - name: llama3.1:8b
+      #   display-name: "Llama 3.1 8B"
   rag:
     top-k: 4
     similarity-threshold: 0.5

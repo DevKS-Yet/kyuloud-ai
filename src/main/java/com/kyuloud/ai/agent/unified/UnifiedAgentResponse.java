@@ -26,6 +26,8 @@ import java.util.List;
  * @param clarification CLARIFY 시 되물을 질문 목록(선택지 포함), 그 외엔 빈 목록
  * @param evidence      RESEARCH 시 워커별 조사 근거(순서·목표·결과), 그 외엔 빈 목록
  * @param toolsUsed     이번 응답에서 호출된 도구 이름 목록(수집형 tracer 기준)
+ * @param executedModel 답변 생성에 실제로 쓴 Ollama 모델(Phase 7). DIRECT/RESEARCH 는 사용자가 고른 모델,
+ *                      CLARIFY 는 기본 모델(명확화는 내부 역할). 폴백 시 요청값과 다를 수 있다.
  */
 public record UnifiedAgentResponse(
         String request,
@@ -34,6 +36,7 @@ public record UnifiedAgentResponse(
         String reply,
         List<ClarifyingQuestion> clarification,
         List<StepResult> evidence,
-        List<String> toolsUsed
+        List<String> toolsUsed,
+        String executedModel
 ) {
 }

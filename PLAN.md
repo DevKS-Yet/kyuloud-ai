@@ -480,6 +480,24 @@ spring:
 
 ---
 
+## 5b. Phase 7 — Ollama 모델 런타임 선택 (Local-only)
+
+> **배경/설계 판단**: 로컬 LLM 채택 동기가 **보안(데이터 외부 미유출) + 비용(과금 없음)**. 외부 프로바이더(Claude/OpenAI/Gemini)는 이 두 전제를 깨므로 도입하지 않고, **같은 로컬 Ollama 서버의 여러 모델만** 사용자가 런타임에 선택한다. 상세 설계는 `AI-Provider-Interface.md`.
+>
+> **핵심 결정**: 프론트는 모델 이름만 전송(키·base-url 없음) → 서버 **allow-list** 검증 → 호출 시 `.options(OllamaChatOptions.model(...))` 로 per-request 오버라이드(빈/캐시 추가 없음). **D4 확정: 선택 모델은 DIRECT 답변 + RESEARCH 워커에만 적용**, Router·명확화·분해·합성·평가는 기본 모델 고정(사용자 대면 생성물만 사용자 모델). VRAM 스왑 주의 → allow-list 는 작게.
+
+#### Phase 7a — 모델 카탈로그/검증/조회 + per-request 적용 ✅(코드, 실호출 검증 대기)
+- `OllamaModelProperties`(`kyuloud.ollama.{default-model, models[]}`) + `ModelCatalog`(allow-list 검증·기본·목록). `ChatRequest.model`(선택 필드) 추가, 위반 시 400(`BusinessException`). `GET /api/agent/models`(허용 모델 목록) 신설. `UnifiedAgentResponse.executedModel` 노출.
+- **per-request 적용(D4)**: `AgentContext` 에 선택 모델 보유 → `UnifiedAgentService.direct()` 와 `OrchestratorService.runWorker()` 호출에 `.options(OllamaChatOptions.builder().model(ctx.model()))` 부착. 내부 역할(Router/clarify/decompose/synthesize/evaluate)은 미적용(기본 모델).
+- **완료 기준**: 같은 질문을 모델 바꿔 호출 시 `executedModel` 과 답변이 달라지고, allow-list 밖 모델은 400, 미지정은 기본 모델로 동작.
+- **구현 메모**: Spring AI 2.0.0 `ChatClientRequestSpec.options(B extends ChatOptions.Builder<?>)` 는 **빌더**를 받음 → `OllamaChatOptions.builder().model(...)`(`.build()` 안 함) 전달. 옵션 클래스는 `org.springframework.ai.ollama.api.OllamaChatOptions`(2.0.0 명칭). 빈/캐시 추가 없이 기존 `workerChatClient` 에 per-request 오버라이드만(런타임 옵션의 null 필드는 ChatModel 기본옵션 유지 → temperature 등 기존값 보존). `ModelCatalog.resolve(model)`: 미지정→기본, allow-list 밖→`BusinessException(400, UNKNOWN_MODEL)`. 기본 모델은 목록에 없어도 항상 허용. CLARIFY 응답의 `executedModel` 은 기본 모델(명확화는 내부 역할이라 D4 미적용). 설정에 `kyuloud.ollama.*` 예시(gemma4:e4b 1개 + 주석 예시) 추가. **7b(on-unavailable 폴백·MetricsAdvisor model 태그) 및 단위테스트는 보류**.
+
+#### Phase 7b — 운영/관측 마무리 ⬜
+- `on-unavailable` 정책(미설치/로드 실패 시 기본 모델 폴백 vs 에러), `MetricsAdvisor` 에 `model` 태그(모델별 지연·토큰 비교).
+- **완료 기준**: 미설치 모델 요청이 정책대로 처리, 모델별 메트릭 분리 집계.
+
+---
+
 ## 6. API 엔드포인트 요약 (목표)
 
 | 단계 | Method | Path | 설명 |
@@ -495,8 +513,9 @@ spring:
 | 5 | POST | `/api/agent/loop` | Agent 평가 루프 (행동→평가→추가행동→답변, 5a) *(Phase 6에서 통합 예정)* |
 | 5 | POST | `/api/agent/clarify` | 명확화 — 답변 전 사용자에게 되물을 정보 판단 (5b) *(Phase 6에서 통합 예정)* |
 | 6 | POST | `/api/agent` | **통합 에이전트** — Router→(CLARIFY/DIRECT/RESEARCH)→답변 (Phase 6) |
+| 7 | GET | `/api/agent/models` | 사용 가능한 Ollama 모델 목록(allow-list) (Phase 7) |
 
-공통: 요청에 `conversationId`(세션 식별자)를 포함해 메모리/맥락을 관리한다.
+공통: 요청에 `conversationId`(세션 식별자)를 포함해 메모리/맥락을 관리한다. Phase 7부터 `/api/agent` 요청에 `model`(선택)을 넣어 DIRECT/워커 생성 모델을 고를 수 있다.
 
 > **Phase 6 통합 후**: `/api/agent` 단일 진입점이 권장 경로가 되고, 위 `/api/agent/chat|plan|loop|clarify`·`/api/rag/chat` 은 deprecated(검증·비교용으로 유지, 제거는 별도 결정).
 

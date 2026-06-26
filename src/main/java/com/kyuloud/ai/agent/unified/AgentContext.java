@@ -14,6 +14,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   <li>{@code conversationId} — 사용자 대화 세션(최종 한 턴만 실제 메모리에 기록).</li>
  *   <li>{@code budget} — LLM/시간 상한(정지조건).</li>
  *   <li>{@code tracer} — 요청별 수집형 도구 추적기(병렬·스트리밍 안전).</li>
+ *   <li>{@code model} — 사용자가 고른 Ollama 모델(Phase 7). DIRECT 답변·RESEARCH 워커에만 적용한다(D4);
+ *       Router·분해·합성·평가 등 내부 역할은 기본 모델을 쓴다.</li>
  *   <li>{@code evidence} — RESEARCH 경로 워커들의 중간 근거(6c+ 에서 누적, synthesize 입력).</li>
  * </ul>
  */
@@ -22,16 +24,23 @@ public class AgentContext {
     private final String conversationId;
     private final Budget budget;
     private final CallTracer tracer;
+    private final String model;
     private final List<StepResult> evidence = new CopyOnWriteArrayList<>();
 
-    public AgentContext(String conversationId, Budget budget, CallTracer tracer) {
+    public AgentContext(String conversationId, Budget budget, CallTracer tracer, String model) {
         this.conversationId = conversationId;
         this.budget = budget;
         this.tracer = tracer;
+        this.model = model;
     }
 
     public String conversationId() {
         return conversationId;
+    }
+
+    /** DIRECT 답변·RESEARCH 워커에 적용할 Ollama 모델(Phase 7). */
+    public String model() {
+        return model;
     }
 
     public Budget budget() {

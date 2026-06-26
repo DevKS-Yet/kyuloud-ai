@@ -7,6 +7,7 @@ import com.kyuloud.ai.agent.tool.ToolProvider;
 import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -261,6 +262,7 @@ public class OrchestratorService {
                 .system(workerSystemPrompt)
                 .user(userMessage)
                 .tools(toolProvider.tools())
+                .options(OllamaChatOptions.builder().model(ctx.model()))   // Phase 7, D4: 워커는 선택 모델
                 .toolContext(ctx.tracer().asToolContext())
                 .call()
                 .content();

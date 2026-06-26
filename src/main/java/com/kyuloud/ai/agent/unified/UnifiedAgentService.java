@@ -8,6 +8,7 @@ import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
@@ -46,6 +47,7 @@ public class UnifiedAgentService {
     private final ChatMemory chatMemory;
     private final AgentBudgetProperties budgetProperties;
     private final ToolProvider toolProvider;
+    private final ModelCatalog modelCatalog;
 
     @Value("classpath:prompts/system-direct.st")
     private Resource directSystemPrompt;
@@ -57,7 +59,8 @@ public class UnifiedAgentService {
                                @Qualifier("workerChatClient") ChatClient workerChatClient,
                                ChatMemory chatMemory,
                                AgentBudgetProperties budgetProperties,
-                               ToolProvider toolProvider) {
+                               ToolProvider toolProvider,
+                               ModelCatalog modelCatalog) {
         this.routerService = routerService;
         this.clarificationService = clarificationService;
         this.orchestratorService = orchestratorService;
@@ -66,18 +69,21 @@ public class UnifiedAgentService {
         this.chatMemory = chatMemory;
         this.budgetProperties = budgetProperties;
         this.toolProvider = toolProvider;
+        this.modelCatalog = modelCatalog;
     }
 
     /**
      * 통합 에이전트 진입점. 대화 맥락을 읽어 Router 로 분류한 뒤 전략별로 처리하고, 사용자 대화에는
      * 원 질문 → 최종 답변 한 턴만 기록한다(중간 산출물은 {@link AgentContext} 가 보유).
      */
-    public UnifiedAgentResponse agent(String conversationId, String message) {
+    public UnifiedAgentResponse agent(String conversationId, String message, String requestedModel) {
         String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        // Phase 7 — allow-list 검증·해석(미지정 시 기본). 허용 안 된 모델이면 여기서 400.
+        String model = modelCatalog.resolve(requestedModel);
         AgentContext ctx = new AgentContext(cid,
                 new Budget(budgetProperties.getMaxLlmCalls(), budgetProperties.getTimeoutMillis()),
-                new CallTracer());
-        log.debug("unified agent: cid={}, message={}", cid, message);
+                new CallTracer(), model);
+        log.debug("unified agent: cid={}, model={}, message={}", cid, model, message);
 
         List<Message> history = chatMemory.get(cid);
         String context = renderHistory(history);
@@ -105,11 +111,11 @@ public class UnifiedAgentService {
         }
 
         recordTurn(cid, message, reply);
-        log.debug("unified agent done: routed={}, executed={}, llmCalls={}, evidence={}, tools={}",
-                decision.strategy(), executed, ctx.budget().usedLlmCalls(),
+        log.debug("unified agent done: routed={}, executed={}, model={}, llmCalls={}, evidence={}, tools={}",
+                decision.strategy(), executed, ctx.model(), ctx.budget().usedLlmCalls(),
                 ctx.evidence().size(), ctx.tracer().getCalledTools());
         return new UnifiedAgentResponse(message, decision.strategy(), executed, reply,
-                List.of(), ctx.evidence(), ctx.tracer().getCalledTools());
+                List.of(), ctx.evidence(), ctx.tracer().getCalledTools(), ctx.model());
     }
 
     /**
@@ -133,8 +139,9 @@ public class UnifiedAgentService {
         // 연속성(#5): 되묻기를 한 턴으로 기록해 재호출 시 맥락 유지. (DIRECT 의 recordTurn 과 동일한 자리)
         recordTurn(cid, message, rendered);
         log.debug("unified agent done: routed=CLARIFY, executed=CLARIFY, questions={}", questions.size());
+        // 명확화 텍스트는 내부 역할(기본 모델)이 만든다(D4: 선택 모델은 DIRECT/워커 전용) → executedModel=기본.
         return new UnifiedAgentResponse(message, RouteStrategy.CLARIFY, RouteStrategy.CLARIFY,
-                rendered, questions, List.of(), ctx.tracer().getCalledTools());
+                rendered, questions, List.of(), ctx.tracer().getCalledTools(), modelCatalog.defaultModel());
     }
 
     /** 되묻는 질문 목록을 사람이 읽을 수 있는 텍스트로 렌더링한다(응답 reply + 메모리 기록용). */
@@ -159,6 +166,7 @@ public class UnifiedAgentService {
      * DIRECT 경로 — 항상 1회 문서 검색(threshold 필터)으로 컨텍스트를 곁들이고, 도구를 갖춘 단발 답변을 만든다.
      * 대화 맥락은 메모리 advisor 가 아니라 읽어온 {@code history} 를 직접 메시지로 주입해 명시적으로 다룬다.
      * 도구 추적은 {@code ToolContext} 에 실은 {@link CallTracer} 로 수집한다(#3 PoC).
+     * 생성 모델은 사용자가 고른 {@code ctx.model()} 로 per-request 오버라이드한다(Phase 7, D4).
      */
     private String direct(AgentContext ctx, List<Message> history, String message) {
         String docContext = knowledgeRetriever.retrieveContext(message);
@@ -173,6 +181,7 @@ public class UnifiedAgentService {
                 .messages(history)
                 .user(userMessage)
                 .tools(toolProvider.tools())
+                .options(OllamaChatOptions.builder().model(ctx.model()))
                 .toolContext(ctx.tracer().asToolContext())
                 .call()
                 .content();
