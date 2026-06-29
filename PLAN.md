@@ -1,5 +1,7 @@
 # kyuloud-ai — Local LLM API 개발 계획
 
+> ℹ️ **1차 개발(Phase 0~7) 완료 기록.** 앞으로의 요구사항 계획·설계는 [`PLAN2.md`](./PLAN2.md)에 이어 적는다. 이 문서는 1차 구축 기록으로 보존한다.
+
 Spring AI 기반으로 로컬 LLM(Ollama)을 구동하는 API를 **Simple Chat → RAG → Agent Chat** 순서로 단계적으로 구축하기 위한 아키텍처 및 개발 계획 문서.
 
 ---

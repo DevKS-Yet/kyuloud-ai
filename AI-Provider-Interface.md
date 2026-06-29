@@ -172,7 +172,7 @@ kyuloud:
 
 1. ~~D4 확정~~ → **확정: DIRECT/워커만 적용**(내부 역할은 기본 모델 고정).
 2. **allow-list 초기 모델**: 어떤 Ollama 모델들을 등록할지(설치 여부·VRAM·tool-calling 지원 기준).
-3. **`on-unavailable` 기본값**: 기본 모델 폴백(추천) vs 에러.
+3. ~~`on-unavailable` 기본값~~ → **확정: `default`(기본 모델 폴백)**. 설치 확인은 `OllamaApi.listModels()` preflight(30s 캐시), 조회 불가 시 graceful 진행.
 4. **모델 옵션 차등**: 모델별 temperature 등 옵션을 다르게 둘지(예: 분류용 낮은 temp). 우선은 공용 정책 유지.
 
 ---

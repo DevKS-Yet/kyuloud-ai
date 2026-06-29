@@ -1,5 +1,6 @@
 package com.kyuloud.ai.rag.retrieval;
 
+import com.kyuloud.ai.common.Conversations;
 import com.kyuloud.ai.config.RagProperties;
 import com.kyuloud.ai.rag.dto.RagChatResponse;
 import com.kyuloud.ai.rag.dto.RagChatResponse.Citation;
@@ -15,7 +16,6 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 import java.util.List;
 
@@ -33,7 +33,6 @@ import java.util.List;
 @Service
 public class RagChatService {
 
-    private static final String DEFAULT_CONVERSATION_ID = "default";
     private static final int SNIPPET_MAX_LENGTH = 160;
 
     private final ChatClient chatClient;
@@ -55,7 +54,7 @@ public class RagChatService {
     }
 
     public RagChatResponse chat(String conversationId, String message) {
-        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String cid = Conversations.resolve(conversationId);
         log.debug("rag chat: cid={}, message={}, topK={}, threshold={}",
                 cid, message, ragProperties.getTopK(), ragProperties.getSimilarityThreshold());
 

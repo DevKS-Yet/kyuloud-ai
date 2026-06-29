@@ -4,6 +4,7 @@ import com.kyuloud.ai.agent.clarify.ClarificationService;
 import com.kyuloud.ai.agent.clarify.ClarificationVerdict;
 import com.kyuloud.ai.agent.dto.ClarifyingQuestion;
 import com.kyuloud.ai.agent.tool.ToolProvider;
+import com.kyuloud.ai.common.Conversations;
 import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -36,8 +37,6 @@ import java.util.List;
 @Slf4j
 @Service
 public class UnifiedAgentService {
-
-    private static final String DEFAULT_CONVERSATION_ID = "default";
 
     private final RouterService routerService;
     private final ClarificationService clarificationService;
@@ -77,7 +76,7 @@ public class UnifiedAgentService {
      * 원 질문 → 최종 답변 한 턴만 기록한다(중간 산출물은 {@link AgentContext} 가 보유).
      */
     public UnifiedAgentResponse agent(String conversationId, String message, String requestedModel) {
-        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String cid = Conversations.resolve(conversationId);
         // Phase 7 — allow-list 검증·해석(미지정 시 기본). 허용 안 된 모델이면 여기서 400.
         String model = modelCatalog.resolve(requestedModel);
         AgentContext ctx = new AgentContext(cid,

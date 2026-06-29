@@ -15,6 +15,7 @@ import com.kyuloud.ai.agent.planner.Plan;
 import com.kyuloud.ai.agent.planner.PlannerService;
 import com.kyuloud.ai.agent.tool.RagSearchTool;
 import com.kyuloud.ai.agent.tool.ToolProvider;
+import com.kyuloud.ai.common.Conversations;
 import com.kyuloud.ai.config.AgentLoopProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -48,8 +49,6 @@ import java.util.UUID;
 @Slf4j
 @Service
 public class AgentService {
-
-    private static final String DEFAULT_CONVERSATION_ID = "default";
 
     private final ChatClient chatClient;
     private final ToolProvider toolProvider;
@@ -89,7 +88,7 @@ public class AgentService {
     }
 
     public AgentResponse chat(String conversationId, String message) {
-        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String cid = Conversations.resolve(conversationId);
         log.debug("agent chat: cid={}, message={}", cid, message);
 
         try {
@@ -106,7 +105,7 @@ public class AgentService {
      * <p>도구 호출(ReAct 루프)을 수행하면서 최종 답변을 토큰 단위 SSE 로 스트리밍한다.
      */
     public Flux<String> stream(String conversationId, String message) {
-        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String cid = Conversations.resolve(conversationId);
         log.debug("agent stream: cid={}, message={}", cid, message);
         return agentSpec(cid, message).stream().content();
     }
@@ -125,7 +124,7 @@ public class AgentService {
      * 한 턴만 깔끔히 기록한다. 즉 plan 도 {@link #chat} 처럼 대화 맥락을 읽고 이어가되, 내부 단계로 메모리를 오염시키지 않는다.
      */
     public PlanResponse planAndExecute(String conversationId, String message) {
-        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String cid = Conversations.resolve(conversationId);
         // JDBC 영속 메모리의 conversation_id 컬럼이 VARCHAR(36)(=UUID 크기)이므로 임시 ID 는 36자 UUID 만 사용한다.
         // (접두사/cid 를 덧붙이면 36자를 초과해 적재 시 'value too long' 오류가 난다.)
         String planCid = UUID.randomUUID().toString();
@@ -169,7 +168,7 @@ public class AgentService {
      * 종료 시 중간 잡음 폐기 → 사용자 대화엔 원 질문→최종 답변 한 턴만 기록).
      */
     public LoopResponse loop(String conversationId, String message) {
-        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String cid = Conversations.resolve(conversationId);
         String loopCid = UUID.randomUUID().toString();
         int maxIterations = Math.max(1, loopProperties.getMaxIterations());
         log.debug("agent loop: cid={}, loopCid={}, maxIter={}, message={}", cid, loopCid, maxIterations, message);
@@ -233,7 +232,7 @@ public class AgentService {
      * 읽기 전용이라 메모리에 기록하지 않는다(실제 답변 턴은 이후 chat/plan/loop 호출에서 일어난다).
      */
     public ClarifyResponse clarify(String conversationId, String message) {
-        String cid = StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
+        String cid = Conversations.resolve(conversationId);
         String context = renderHistory(chatMemory.get(cid));
         ClarificationVerdict verdict = clarificationService.assess(message, context);
         log.debug("agent clarify: cid={}, needsClarification={}, message={}",

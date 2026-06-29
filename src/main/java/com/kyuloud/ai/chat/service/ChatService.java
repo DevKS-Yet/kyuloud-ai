@@ -1,11 +1,11 @@
 package com.kyuloud.ai.chat.service;
 
+import com.kyuloud.ai.common.Conversations;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
 /**
@@ -17,12 +17,10 @@ import reactor.core.publisher.Flux;
 @RequiredArgsConstructor
 public class ChatService {
 
-    private static final String DEFAULT_CONVERSATION_ID = "default";
-
     private final ChatClient chatClient;
 
     public String chat(String conversationId, String message) {
-        String cid = resolveConversationId(conversationId);
+        String cid = Conversations.resolve(conversationId);
         log.debug("chat request: cid={}, message={}", cid, message);
         return chatClient.prompt()
                 .user(message)
@@ -35,16 +33,12 @@ public class ChatService {
      * Phase 1b — 토큰 단위 스트리밍 응답.
      */
     public Flux<String> stream(String conversationId, String message) {
-        String cid = resolveConversationId(conversationId);
+        String cid = Conversations.resolve(conversationId);
         log.debug("stream request: cid={}, message={}", cid, message);
         return chatClient.prompt()
                 .user(message)
                 .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, cid))
                 .stream()
                 .content();
-    }
-
-    private String resolveConversationId(String conversationId) {
-        return StringUtils.hasText(conversationId) ? conversationId : DEFAULT_CONVERSATION_ID;
     }
 }
