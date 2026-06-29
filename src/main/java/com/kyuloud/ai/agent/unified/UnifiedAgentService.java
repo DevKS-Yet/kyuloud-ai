@@ -4,6 +4,7 @@ import com.kyuloud.ai.agent.clarify.ClarificationService;
 import com.kyuloud.ai.agent.clarify.ClarificationVerdict;
 import com.kyuloud.ai.agent.dto.ClarifyingQuestion;
 import com.kyuloud.ai.agent.tool.ToolProvider;
+import com.kyuloud.ai.common.ConversationHistory;
 import com.kyuloud.ai.common.Conversations;
 import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
@@ -12,7 +13,6 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -85,7 +85,7 @@ public class UnifiedAgentService {
         log.debug("unified agent: cid={}, model={}, message={}", cid, model, message);
 
         List<Message> history = chatMemory.get(cid);
-        String context = renderHistory(history);
+        String context = ConversationHistory.render(history);
         RouteDecision decision = routeWithBudget(ctx, message, context);
 
         // CLARIFY 분기(6b): Router 가 CLARIFY 면 명확화 전문가로 되묻기를 생성한다. 전문가가 되물을 게 없다고
@@ -200,26 +200,5 @@ public class UnifiedAgentService {
     /** 사용자 대화({@code cid})에 '원 질문 → 최종 답변' 한 턴만 기록한다(중간 산출물 제외). */
     private void recordTurn(String cid, String userMessage, String reply) {
         chatMemory.add(cid, List.of(new UserMessage(userMessage), new AssistantMessage(reply)));
-    }
-
-    /** 대화 기록을 Router 분류용 컨텍스트 텍스트(역할 라벨 + 내용)로 렌더링한다. */
-    private String renderHistory(List<Message> history) {
-        if (history == null || history.isEmpty()) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (Message m : history) {
-            sb.append(roleLabel(m.getMessageType())).append(": ").append(m.getText()).append("\n");
-        }
-        return sb.toString();
-    }
-
-    private String roleLabel(MessageType type) {
-        return switch (type) {
-            case USER -> "사용자";
-            case ASSISTANT -> "어시스턴트";
-            case SYSTEM -> "시스템";
-            default -> type.getValue();
-        };
     }
 }

@@ -15,6 +15,7 @@ import com.kyuloud.ai.agent.planner.Plan;
 import com.kyuloud.ai.agent.planner.PlannerService;
 import com.kyuloud.ai.agent.tool.RagSearchTool;
 import com.kyuloud.ai.agent.tool.ToolProvider;
+import com.kyuloud.ai.common.ConversationHistory;
 import com.kyuloud.ai.common.Conversations;
 import com.kyuloud.ai.config.AgentLoopProperties;
 import lombok.extern.slf4j.Slf4j;
@@ -22,7 +23,6 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -233,7 +233,7 @@ public class AgentService {
      */
     public ClarifyResponse clarify(String conversationId, String message) {
         String cid = Conversations.resolve(conversationId);
-        String context = renderHistory(chatMemory.get(cid));
+        String context = ConversationHistory.render(chatMemory.get(cid));
         ClarificationVerdict verdict = clarificationService.assess(message, context);
         log.debug("agent clarify: cid={}, needsClarification={}, message={}",
                 cid, verdict.needsClarification(), message);
@@ -312,26 +312,5 @@ public class AgentService {
     /** 사용자 대화({@code cid})에 '원 질문 → 최종 답변' 한 턴만 기록한다(중간 잡음 제외). plan/loop 가 공유한다. */
     private void recordTurn(String cid, String userMessage, String reply) {
         chatMemory.add(cid, List.of(new UserMessage(userMessage), new AssistantMessage(reply)));
-    }
-
-    /** Phase 5b — 대화 기록을 명확화 판단용 컨텍스트 텍스트로 렌더링한다(역할 라벨 + 내용). */
-    private String renderHistory(List<Message> history) {
-        if (history == null || history.isEmpty()) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (Message m : history) {
-            sb.append(roleLabel(m.getMessageType())).append(": ").append(m.getText()).append("\n");
-        }
-        return sb.toString();
-    }
-
-    private String roleLabel(MessageType type) {
-        return switch (type) {
-            case USER -> "사용자";
-            case ASSISTANT -> "어시스턴트";
-            case SYSTEM -> "시스템";
-            default -> type.getValue();
-        };
     }
 }
