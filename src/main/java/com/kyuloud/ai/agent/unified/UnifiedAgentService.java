@@ -4,6 +4,7 @@ import com.kyuloud.ai.agent.clarify.ClarificationService;
 import com.kyuloud.ai.agent.clarify.ClarificationVerdict;
 import com.kyuloud.ai.agent.dto.ClarifyingQuestion;
 import com.kyuloud.ai.agent.tool.ToolProvider;
+import com.kyuloud.ai.common.ChatMemories;
 import com.kyuloud.ai.common.ConversationHistory;
 import com.kyuloud.ai.common.Conversations;
 import com.kyuloud.ai.config.AgentBudgetProperties;
@@ -11,9 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.ollama.api.OllamaChatOptions;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -109,7 +108,7 @@ public class UnifiedAgentService {
             reply = direct(ctx, history, message);
         }
 
-        recordTurn(cid, message, reply);
+        ChatMemories.recordTurn(chatMemory, cid, message, reply);
         log.debug("unified agent done: routed={}, executed={}, model={}, llmCalls={}, evidence={}, tools={}",
                 decision.strategy(), executed, ctx.model(), ctx.budget().usedLlmCalls(),
                 ctx.evidence().size(), ctx.tracer().getCalledTools());
@@ -126,7 +125,7 @@ public class UnifiedAgentService {
      * 호출부가 DIRECT 로 진행하게 한다.
      */
     private UnifiedAgentResponse tryClarify(AgentContext ctx, String cid, String message, String context) {
-        accountLlmCall(ctx, "clarify");
+        ctx.budget().accountLlmCall("clarify");
         ClarificationVerdict verdict = clarificationService.assess(message, context);
         List<ClarifyingQuestion> questions = verdict.questions();
         if (!verdict.needsClarification() || questions == null || questions.isEmpty()) {
@@ -136,7 +135,7 @@ public class UnifiedAgentService {
 
         String rendered = renderClarification(questions);
         // 연속성(#5): 되묻기를 한 턴으로 기록해 재호출 시 맥락 유지. (DIRECT 의 recordTurn 과 동일한 자리)
-        recordTurn(cid, message, rendered);
+        ChatMemories.recordTurn(chatMemory, cid, message, rendered);
         log.debug("unified agent done: routed=CLARIFY, executed=CLARIFY, questions={}", questions.size());
         // 명확화 텍스트는 내부 역할(기본 모델)이 만든다(D4: 선택 모델은 DIRECT/워커 전용) → executedModel=기본.
         return new UnifiedAgentResponse(message, RouteStrategy.CLARIFY, RouteStrategy.CLARIFY,
@@ -157,7 +156,7 @@ public class UnifiedAgentService {
 
     /** Router 분류 1회를 예산에 반영하고 수행한다. */
     private RouteDecision routeWithBudget(AgentContext ctx, String message, String context) {
-        accountLlmCall(ctx, "router");
+        ctx.budget().accountLlmCall("router");
         return routerService.route(message, context);
     }
 
@@ -174,7 +173,7 @@ public class UnifiedAgentService {
                         + "관련 없으면 무시하세요.\n\n질문:\n" + message
                 : message;
 
-        accountLlmCall(ctx, "direct");
+        ctx.budget().accountLlmCall("direct");
         return workerChatClient.prompt()
                 .system(directSystemPrompt)
                 .messages(history)
@@ -186,19 +185,4 @@ public class UnifiedAgentService {
                 .content();
     }
 
-    /**
-     * LLM 호출 1회를 예산에 반영한다. 6a 에서는 단발 경로라 초과가 발생하지 않지만, 정지조건 메커니즘을
-     * 지금부터 작동시킨다(초과해도 막지 않고 경고만; 실제 반복 차단은 6c+ 의 루프에서 {@code isExhausted()} 로 한다).
-     */
-    private void accountLlmCall(AgentContext ctx, String purpose) {
-        if (!ctx.budget().tryConsumeLlmCall()) {
-            log.warn("unified agent: 예산 초과 상태에서 LLM 호출({}) — best-effort 진행 (used={}/{})",
-                    purpose, ctx.budget().usedLlmCalls(), ctx.budget().maxLlmCalls());
-        }
-    }
-
-    /** 사용자 대화({@code cid})에 '원 질문 → 최종 답변' 한 턴만 기록한다(중간 산출물 제외). */
-    private void recordTurn(String cid, String userMessage, String reply) {
-        chatMemory.add(cid, List.of(new UserMessage(userMessage), new AssistantMessage(reply)));
-    }
 }

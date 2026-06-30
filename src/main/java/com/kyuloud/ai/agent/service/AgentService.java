@@ -15,15 +15,14 @@ import com.kyuloud.ai.agent.planner.Plan;
 import com.kyuloud.ai.agent.planner.PlannerService;
 import com.kyuloud.ai.agent.tool.RagSearchTool;
 import com.kyuloud.ai.agent.tool.ToolProvider;
+import com.kyuloud.ai.common.ChatMemories;
 import com.kyuloud.ai.common.ConversationHistory;
 import com.kyuloud.ai.common.Conversations;
 import com.kyuloud.ai.config.AgentLoopProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
@@ -146,7 +145,7 @@ public class AgentService {
                     ? stepResults.get(0).result()
                     : plannerService.synthesize(message, stepResults);
 
-            recordTurn(cid, message, finalReply);
+            ChatMemories.recordTurn(chatMemory, cid, message, finalReply);
             return new PlanResponse(message, plan.steps(), stepResults, finalReply,
                     toolCallTracker.getCalledTools());
         } finally {
@@ -214,7 +213,7 @@ public class AgentService {
             }
 
             String finalReply = plannerService.synthesize(message, evidence);
-            recordTurn(cid, message, finalReply);
+            ChatMemories.recordTurn(chatMemory, cid, message, finalReply);
             return new LoopResponse(message, plan.steps(), iterations, finalReply,
                     toolCallTracker.getCalledTools());
         } finally {
@@ -309,8 +308,4 @@ public class AgentService {
         }
     }
 
-    /** 사용자 대화({@code cid})에 '원 질문 → 최종 답변' 한 턴만 기록한다(중간 잡음 제외). plan/loop 가 공유한다. */
-    private void recordTurn(String cid, String userMessage, String reply) {
-        chatMemory.add(cid, List.of(new UserMessage(userMessage), new AssistantMessage(reply)));
-    }
 }

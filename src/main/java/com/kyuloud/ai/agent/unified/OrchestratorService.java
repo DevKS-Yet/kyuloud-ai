@@ -134,7 +134,7 @@ public class OrchestratorService {
                 log.warn("orchestrator: 예산 소진 → 보강 평가 중단(라운드 {}), 지금까지 근거로 합성", round);
                 return;
             }
-            accountLlmCall(ctx, "evaluate");
+            ctx.budget().accountLlmCall("evaluate");
             EvaluationVerdict verdict = evaluatorService.evaluate(question, formatEvidence(ctx.evidence()));
             if (verdict.sufficient()) {
                 log.debug("orchestrator: 근거 충분 → 보강 종료(조기 종료, 라운드 {})", round);
@@ -155,7 +155,7 @@ public class OrchestratorService {
             WorkerTask task = new WorkerTask(nextOrder, objective, false);
             log.debug("orchestrator: 근거 부족(missing={}) → 보강 워커[{}] 투입: {}",
                     verdict.missing(), nextOrder, objective);
-            accountLlmCall(ctx, "reinforce-worker-" + nextOrder);
+            ctx.budget().accountLlmCall("reinforce-worker-" + nextOrder);
             ctx.addEvidence(runWorker(ctx, task));
         }
         log.debug("orchestrator: 보강 라운드 상한({}) 도달 → 합성", maxRounds);
@@ -187,7 +187,7 @@ public class OrchestratorService {
         }
         if (batch.size() == 1) {
             WorkerTask task = batch.get(0);
-            accountLlmCall(ctx, "worker-" + task.order());
+            ctx.budget().accountLlmCall("worker-" + task.order());
             ctx.addEvidence(runWorker(ctx, task));
             return;
         }
@@ -204,7 +204,7 @@ public class OrchestratorService {
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<StepResult>> futures = new ArrayList<>(batch.size());
             for (WorkerTask task : batch) {
-                accountLlmCall(ctx, "worker-" + task.order());
+                ctx.budget().accountLlmCall("worker-" + task.order());
                 futures.add(executor.submit(() -> runWorker(ctx, task)));
             }
             for (Future<StepResult> future : futures) {
@@ -227,7 +227,7 @@ public class OrchestratorService {
      * 단일 하위작업으로 폴백한다(RESEARCH 로 분기했으니 최소 1개는 돌린다).
      */
     private WorkerPlan decompose(AgentContext ctx, String question, String context) {
-        accountLlmCall(ctx, "orchestrator-decompose");
+        ctx.budget().accountLlmCall("orchestrator-decompose");
         String userMessage = StringUtils.hasText(context)
                 ? "대화 맥락:\n" + context + "\n\n질문:\n" + question
                 : question;
@@ -282,7 +282,7 @@ public class OrchestratorService {
         String prompt = "원래 질문:\n" + question + "\n\n워커별 조사 근거:\n" + formatEvidence(evidence)
                 + "\n위 근거를 종합해 원래 질문에 대한 최종 답변을 작성하세요.";
 
-        accountLlmCall(ctx, "orchestrator-synthesize");
+        ctx.budget().accountLlmCall("orchestrator-synthesize");
         return reasonerChatClient.prompt()
                 .system(synthesisSystemPrompt)
                 .user(prompt)
@@ -302,16 +302,5 @@ public class OrchestratorService {
 
     private WorkerPlan singleTaskFallback(String question) {
         return new WorkerPlan(List.of(new WorkerTask(1, question, false)));
-    }
-
-    /**
-     * LLM 호출 1회를 예산에 반영한다. 초과해도 막지 않고 경고만 한다(실제 워커 투입 차단은 {@code research} 의
-     * 루프가 {@link Budget#isExhausted()} 로 한다 — 이 메서드는 정확한 사용량 집계·관측이 목적).
-     */
-    private void accountLlmCall(AgentContext ctx, String purpose) {
-        if (!ctx.budget().tryConsumeLlmCall()) {
-            log.warn("orchestrator: 예산 초과 상태에서 LLM 호출({}) — best-effort 진행 (used={}/{})",
-                    purpose, ctx.budget().usedLlmCalls(), ctx.budget().maxLlmCalls());
-        }
     }
 }
