@@ -7,7 +7,6 @@ import com.kyuloud.ai.agent.tool.ToolProvider;
 import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -57,6 +56,7 @@ public class OrchestratorService {
     private final KnowledgeRetriever knowledgeRetriever;
     private final AgentBudgetProperties budgetProperties;
     private final ToolProvider toolProvider;
+    private final ChatOptionsFactory chatOptionsFactory;
 
     @Value("classpath:prompts/system-orchestrator.st")
     private Resource orchestratorSystemPrompt;
@@ -72,13 +72,15 @@ public class OrchestratorService {
                                EvaluatorService evaluatorService,
                                KnowledgeRetriever knowledgeRetriever,
                                AgentBudgetProperties budgetProperties,
-                               ToolProvider toolProvider) {
+                               ToolProvider toolProvider,
+                               ChatOptionsFactory chatOptionsFactory) {
         this.reasonerChatClient = reasonerChatClient;
         this.workerChatClient = workerChatClient;
         this.evaluatorService = evaluatorService;
         this.knowledgeRetriever = knowledgeRetriever;
         this.budgetProperties = budgetProperties;
         this.toolProvider = toolProvider;
+        this.chatOptionsFactory = chatOptionsFactory;
     }
 
     /**
@@ -262,7 +264,7 @@ public class OrchestratorService {
                 .system(workerSystemPrompt)
                 .user(userMessage)
                 .tools(toolProvider.tools())
-                .options(OllamaChatOptions.builder().model(ctx.model()))   // Phase 7, D4: 워커는 선택 모델
+                .options(chatOptionsFactory.forRequest(ctx))   // Phase 7, D4: 워커는 선택 모델 (Phase 8b: 팩토리 경유)
                 .toolContext(ctx.tracer().asToolContext())
                 .call()
                 .content();

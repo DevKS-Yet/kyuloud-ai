@@ -11,7 +11,6 @@ import com.kyuloud.ai.config.AgentBudgetProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -46,6 +45,7 @@ public class UnifiedAgentService {
     private final AgentBudgetProperties budgetProperties;
     private final ToolProvider toolProvider;
     private final ModelCatalog modelCatalog;
+    private final ChatOptionsFactory chatOptionsFactory;
 
     @Value("classpath:prompts/system-direct.st")
     private Resource directSystemPrompt;
@@ -58,7 +58,8 @@ public class UnifiedAgentService {
                                ChatMemory chatMemory,
                                AgentBudgetProperties budgetProperties,
                                ToolProvider toolProvider,
-                               ModelCatalog modelCatalog) {
+                               ModelCatalog modelCatalog,
+                               ChatOptionsFactory chatOptionsFactory) {
         this.routerService = routerService;
         this.clarificationService = clarificationService;
         this.orchestratorService = orchestratorService;
@@ -68,6 +69,7 @@ public class UnifiedAgentService {
         this.budgetProperties = budgetProperties;
         this.toolProvider = toolProvider;
         this.modelCatalog = modelCatalog;
+        this.chatOptionsFactory = chatOptionsFactory;
     }
 
     /**
@@ -179,7 +181,7 @@ public class UnifiedAgentService {
                 .messages(history)
                 .user(userMessage)
                 .tools(toolProvider.tools())
-                .options(OllamaChatOptions.builder().model(ctx.model()))
+                .options(chatOptionsFactory.forRequest(ctx))
                 .toolContext(ctx.tracer().asToolContext())
                 .call()
                 .content();
